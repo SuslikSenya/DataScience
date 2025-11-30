@@ -5,6 +5,9 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Tuple, List
 import os
 
+from requests.adapters import HTTPAdapter
+from urllib3 import Retry
+
 from .data import Config
 from .model import LSMModel
 from .metrics_plot import ModelMetrics, Plot
@@ -13,14 +16,34 @@ from .metrics_plot import ModelMetrics, Plot
 class NBUScrapper:
     def __init__(self, currencies: List[str] = None):
         self.currencies = currencies or ["USD", "EUR", "RUB"]
+        self.session = requests.Session()
+
+        # Add retry strategy
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
 
     def fetch_single_currency(self, currency: str, date_str: str) -> float:
-        url = f"https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?valcode={currency}&date={date_str}&json"
-        r = requests.get(url)
-        if r.status_code == 200:
-            d = r.json()
 
-        return float(d[0]["rate"]) if d else None
+        url = f"https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?valcode={currency}&date={date_str}&json"
+
+        try:
+            r = self.session.get(url, timeout=15)
+            if r.status_code == 200:
+                day = r.json()
+                if day:  # Check if list is not empty
+                    return float(day[0]["rate"])
+            else:
+                print(f"HTTP {r.status_code} for {currency} on {date_str}")
+        except (requests.RequestException, KeyError, IndexError, ValueError) as e:
+            print(f"Error fetching {currency} for {date_str}: {e}")
+
+        return None
 
     def fetch_all_currencies(self, date_str: str) -> Dict[str, float]:
         rates = {}

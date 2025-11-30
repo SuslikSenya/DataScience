@@ -57,15 +57,27 @@ def main():
 
         pipeline.scrape_and_save()
 
+        def print_currency_results(currency, results):
+            print(f"\n {currency} РЕЗУЛЬТАТИ:")
+            print(
+                f" - Навчання: MSE={results['train_metrics']['mse']:.3f} | MAE={results['train_metrics']['mae']:.3f} | R²={results['train_metrics']['r2']:.3f}")
+            print(
+                f" - Тест:     MSE={results['test_metrics']['mse']:.3f} | MAE={results['test_metrics']['mae']:.3f} | R²={results['test_metrics']['r2']:.3f}")
+
         print("Analyzing USD...")
         plot_usd, log_usd = pipeline.forward("USD")
         pipeline.save_plot(plot_usd, "usd_plot")
-        print("USD results:", log_usd)
+        print_currency_results("USD", log_usd)
 
         print("Analyzing EUR...")
         plot_eur, log_eur = pipeline.forward("EUR")
         pipeline.save_plot(plot_eur, "eur_plot")
-        print("EUR results:", log_eur)
+        print_currency_results("EUR", log_eur)
+
+        print("Analyzing RUB...")
+        plot_rub, log_rub = pipeline.forward("RUB")
+        pipeline.save_plot(plot_rub, "rub_plot")
+        print_currency_results("RUB", log_rub)
 
         correlation_matrix = pipeline.get_currency_correlation()
         print("Currency correlation:")
