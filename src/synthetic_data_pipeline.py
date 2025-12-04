@@ -1,14 +1,90 @@
 import numpy as np
 from typing import Dict, Any
 
-from .data import Config, TrendGenerator, NoiseGenerator
+from .data import Config, TrendGenerator, NoiseGenerator, EntropyAnomalyDetector
 from .metrics_plot import ModelMetrics, DataMetrics, Plot
 from .model import LSMModel
+from .reports import ReportGenerator
 
+
+# !=============================================================================
+# ! Synthetic Pipeline
+# !=============================================================================
+
+
+def pipeline_synthetic(cfg: Config):
+    print("Starting synthetic pipeline.")
+
+    trend_gen = TrendGenerator(cfg)
+    noise_gen = NoiseGenerator(cfg)
+
+    # Generate synthetic data
+    x_train = np.linspace(*cfg.x_range_train, cfg.n_train)
+    x_test = np.linspace(*cfg.x_range_test, cfg.n_test)
+
+    trend_train = trend_gen.generate(x_train, cfg.trend_type)
+    trend_test = trend_gen.generate(x_test, cfg.trend_type)
+
+    noise_raw = noise_gen.generate(cfg.noise_type, cfg.n_train, cfg.add_anomalies)
+
+    detector = EntropyAnomalyDetector(
+        window=cfg.anomaly_window,
+        base_k=cfg.anomaly_threshold,
+        alpha=1.2,
+        bins=30,
+    )
+
+    noise_clean, anomalies_count = detector.clean(noise_raw)
+    y_train = trend_train + noise_clean
+
+    # Save anomaly report
+    ReportGenerator.save_anomaly_report(
+        detector, f"{cfg.save_report_path}/anomaly_report.csv"
+    )
+
+    data_metrics = {
+        "noise_mean": float(noise_raw.mean()),
+        "noise_std": float(noise_raw.std()),
+        "noise_clean_std": float(noise_clean.std()),
+        "anomalies_removed": anomalies_count,
+    }
+
+    ReportGenerator.save_data_report(
+        data_metrics, f"{cfg.save_report_path}/data_report.csv"
+    )
+
+    reports = []
+    for name, model in cfg.models.items():
+        model.fit(x_train, y_train)
+
+        pred_train = model.predict(x_train)
+        pred_test = model.predict(x_test)
+
+        rep = {
+            "model": name,
+            "train_metrics": ModelMetrics.compute(trend_train, pred_train),
+            "test_metrics": ModelMetrics.compute(trend_test, pred_test),
+        }
+        reports.append(rep)
+
+        Plot.plot_data(
+            x_train,
+            y_train,
+            trend_train,
+            pred_train,
+            x_test,
+            pred_test,
+            trend_test,
+            fname=f"{cfg.save_plot_path}/{name}_synthetic.png",
+        )
+
+    ReportGenerator.save_model_report(
+        reports, f"{cfg.save_report_path}/model_report.csv"
+    )
 
 class SyntheticDataPipeline:
     def __init__(
-            self, config:Config, add_anomalies: bool = False
+            self, config: Config, add_anomalies: bool = False
     ):
         """Pipeline initialization function"""
 
@@ -33,7 +109,7 @@ class SyntheticDataPipeline:
         noise_train = self.noises.generate(noise_type, self.cfg.n_train, self.add_anomalies)
         y_train = trend_train + noise_train
 
-        Plot.plot_hist( fname='histogram', arr=noise_train)
+        Plot.plot_hist(fname='histogram', arr=noise_train)
         print("Fitting the model...\n")
         model = LSMModel(model_linear).fit(x_train, y_train)
 

@@ -5,13 +5,16 @@ from typing import Dict
 
 class ModelMetrics:
     @staticmethod
-    def calculate(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
+    def compute(y_true, y_pred) -> Dict[str, float]:
+        mse = float(np.mean((y_true - y_pred) ** 2))
+        mae = float(np.mean(np.abs(y_true - y_pred)))
         denom = np.sum((y_true - np.mean(y_true)) ** 2)
-        return {
-            "mse": float(np.mean((y_true - y_pred) ** 2)),
-            "mae": float(np.mean(np.abs(y_true - y_pred))),
-            "r2": float("nan") if denom == 0 else float(1 - np.sum((y_true - y_pred) ** 2) / denom)
-        }
+        r2 = (
+            float(1 - np.sum((y_true - y_pred) ** 2) / denom)
+            if denom > 0
+            else float("nan")
+        )
+        return {"mse": mse, "mae": mae, "r2": r2}
 
 
 class DataMetrics:
@@ -36,23 +39,24 @@ class Plot:
                   trend_test=None,
                   fname: str = None, ):
         """2D plotiing function"""
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 9))
+        plt.figure(figsize=(12, 6))
+        plt.plot(x_train, y_train, label="train data")
+        plt.plot(x_train, trend_train, label="trend", linestyle="--")
+        plt.plot(x_train, predictions_train, label="train pred")
 
-        ax1.plot(x_train, y_train, label="data", alpha=0.6)
-        ax1.plot(x_train, trend_train, label="trend", linestyle="--")
-        ax1.plot(x_train, predictions_train, label="train pred")
-        ax1.set_title("Train")
-        ax1.legend()
+        split_x = x_train.max()
+        plt.axvline(x=split_x, color="black", linewidth=1.3)
+        plt.text(split_x, plt.ylim()[1], "split", ha="right", va="top")
 
-        if x_test is not None:
-            ax2.plot(x_test, predictions_test, label="test pred")
-            if trend_test is not None:
-                ax2.plot(x_test, trend_test, linestyle="--", label="trend")
-            ax2.legend()
-            ax2.set_title("Test")
+        plt.plot(x_test, predictions_test, label="test pred")
+        plt.plot(x_test, trend_test, label="test trend", linestyle="--")
 
+        plt.legend()
+        plt.grid(True)
         plt.tight_layout()
-        plt.savefig(f"{fname}_data")
+        plt.savefig(fname)
+        plt.close()
+
 
     @staticmethod
     def plot_hist(fname: str,

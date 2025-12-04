@@ -11,6 +11,7 @@ from urllib3 import Retry
 from .data import Config
 from .model import LSMModel
 from .metrics_plot import ModelMetrics, Plot
+from .reports import ReportGenerator
 
 
 class NBUScrapper:
@@ -18,7 +19,6 @@ class NBUScrapper:
         self.currencies = currencies or ["USD", "EUR", "RUB"]
         self.session = requests.Session()
 
-        # Add retry strategy
         retry_strategy = Retry(
             total=3,
             backoff_factor=1,
@@ -36,7 +36,7 @@ class NBUScrapper:
             r = self.session.get(url, timeout=15)
             if r.status_code == 200:
                 day = r.json()
-                if day:  # Check if list is not empty
+                if day:
                     return float(day[0]["rate"])
             else:
                 print(f"HTTP {r.status_code} for {currency} on {date_str}")
@@ -94,6 +94,59 @@ class DataLoader:
         return df[:cut], df[cut:]
 
 
+# !=============================================================================
+# ! Real Data Pipeline
+# !=============================================================================
+
+
+def pipeline_real(cfg: Config):
+    scraper = NBUScrapper(cfg.currencies)
+    loader = DataLoader(cfg.save_path)
+
+    if not os.path.exists(cfg.save_path):
+        df = scraper.fetch_range(cfg.start_date, cfg.end_date)
+        loader.save(df)
+
+    df = loader.load()
+    train, test = loader.split(df, cfg.train_ratio)
+
+    x_train = np.arange(len(train), dtype=float)
+    x_test = np.arange(len(train), len(df), dtype=float)
+
+    reports = []
+
+    for cur in cfg.currencies:
+        y_train = train[cur].astype(float).values
+        y_test = test[cur].astype(float).values
+
+        for name, model in cfg.models.items():
+            model.fit(x_train, y_train)
+            pred_train = model.predict(x_train)
+            pred_test = model.predict(x_test)
+
+            rep = {
+                "model": f"{cur}_{name}",
+                "train_metrics": ModelMetrics.compute(y_train, pred_train),
+                "test_metrics": ModelMetrics.compute(y_test, pred_test),
+            }
+
+            reports.append(rep)
+
+            Plot.plot_data(
+                x_train,
+                y_train,
+                y_train,
+                pred_train,
+                x_test,
+                pred_test,
+                y_test,
+                fname=f"{cfg.save_plot_path}/{cur}_{name}_real.png",
+            )
+    ReportGenerator.save_model_report(
+        reports, f"{cfg.save_report_path}/real_model_report.csv"
+    )
+
+
 class RealDataPipeline:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -141,7 +194,7 @@ class RealDataPipeline:
             "train_metrics": ModelMetrics.calculate(y_train, pred_train),
             "test_metrics": ModelMetrics.calculate(y_test, pred_test),
             "pred_coef": model.pred_coef.tolist(),
-            "available_currencies": list(df.columns[1:])  # список доступних валют
+            "available_currencies": list(df.columns[1:])
         }
 
         return plot_data, logging_data

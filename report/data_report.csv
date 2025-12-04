@@ -1,0 +1,5 @@
+metric,value
+noise_mean,0.17230434261980576
+noise_std,3.529746430496186
+noise_clean_std,1.574628895408363
+anomalies_removed,110.0
