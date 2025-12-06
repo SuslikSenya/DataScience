@@ -1,0 +1,17 @@
+region,model,horizon,step,y_pred
+Central,TorchNN,0.5,33,7153.3447
+Central,TorchNN,0.5,34,7369.9604
+Central,TorchNN,0.5,35,7586.577
+Central,TorchNN,0.5,36,7803.194
+Central,TorchNN,0.5,37,8019.809
+Central,TorchNN,0.5,38,8236.427
+Central,TorchNN,0.5,39,8453.043
+Central,TorchNN,0.5,40,8669.659
+Central,TorchNN,0.5,41,8886.275
+Central,TorchNN,0.5,42,9102.891
+Central,TorchNN,0.5,43,9319.508
+Central,TorchNN,0.5,44,9536.124
+Central,TorchNN,0.5,45,9752.74
+Central,TorchNN,0.5,46,9969.357
+Central,TorchNN,0.5,47,10185.974
+Central,TorchNN,0.5,48,10402.589

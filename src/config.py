@@ -27,7 +27,7 @@ NBU_END_DATE = "2025-12-31"
 NBU_TRAIN_RATIO = 0.7
 NBU_CSV_PATH = os.path.join(DATA_DIR, "multi_currency_data.csv")
 
-DATASET10_PATH = os.path.join(DATA_DIR, "Data_Set_10.xls - Orders.csv")
+DATASET10_PATH = os.path.join(DATA_DIR, "Data_Set_10.xls")
 
 TS_DECOMP_MODEL = "additive"
 TS_DECOMP_PERIOD_SYN = 30

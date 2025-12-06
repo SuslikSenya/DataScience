@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import requests
+from statsmodels.tsa.arima.model import ARIMA
 
 from src.config import (
     FIGURES_DIR,
@@ -25,7 +26,7 @@ from src.config import (
     TS_DECOMP_MODEL,
     TS_DECOMP_PERIOD_NBU,
     TS_SYNTHETIC_YEARS,
-    TS_NOISE_SCALE,
+    TS_NOISE_SCALE, ARIMA_D_RANGE, ARIMA_Q_RANGE, ARIMA_P_RANGE, FORECAST_HORIZONS,
 )
 
 from src.filters import (
@@ -34,7 +35,8 @@ from src.filters import (
     run_filter_series,
 )
 from src.models import Models
-from src.ts_analysis import metrics_regression, analyze_matrix, decompose_and_plot
+from src.ts_analysis import metrics_regression, analyze_matrix, decompose_and_plot, select_best_arima_order, \
+    generate_extrapolation_x
 
 
 def fetch_nbu_rates(currencies, start_date: str, end_date: str) -> pd.DataFrame:

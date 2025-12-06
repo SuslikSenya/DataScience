@@ -2,6 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from statsmodels.tsa.arima.model import ARIMA
 
 from src.config import (
     FIGURES_DIR,
@@ -27,7 +28,7 @@ from src.config import (
     ABG_ALPHA,
     ABG_BETA,
     ABG_GAMMA,
-    DT,
+    DT, MA_WINDOW_CANDIDATES, ARIMA_D_RANGE, ARIMA_Q_RANGE, ARIMA_P_RANGE, FORECAST_HORIZONS,
 )
 
 from src.filters import (
@@ -41,7 +42,7 @@ from src.models import Models
 from src.ts_analysis import (
     metrics_regression,
     analyze_matrix,
-    decompose_and_plot,
+    decompose_and_plot, select_best_ma_window, select_best_arima_order, generate_extrapolation_x,
 )
 from src.synthetic_core import generate_trend, generate_noise, inject_anomalies
 

@@ -9,13 +9,12 @@ from src.config import (
     FIGURES_DIR,
     REPORTS_DIR,
     DATASET10_PATH,
-    DATASET10_MONTH_COLUMNS,
     DATASET10_REGION_COL,
-    LINEAR_TRAIN_RATIO_DS10,
     TS_DECOMP_MODEL,
     TS_DECOMP_PERIOD_DS10,
     TS_SYNTHETIC_YEARS,
-    TS_NOISE_SCALE, FORECAST_HORIZONS, ARIMA_Q_RANGE, ARIMA_D_RANGE, ARIMA_P_RANGE,
+    TS_NOISE_SCALE, FORECAST_HORIZONS, ARIMA_Q_RANGE, ARIMA_D_RANGE, ARIMA_P_RANGE, DATASET10_DATE_COL,
+    DATASET10_VALUE_COL, DATASET10_TRAIN_RATIO,
 )
 
 from src.models import Models
@@ -26,41 +25,52 @@ from src.ts_analysis import (
 )
 
 
-def load_and_clean_dataset10(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
+def load_and_prepare_dataset10(path: str) -> pd.DataFrame:
+    df = pd.read_excel(path)
     df.columns = [c.strip() for c in df.columns]
+
     df[DATASET10_REGION_COL] = df[DATASET10_REGION_COL].astype(str).str.strip()
-    df.replace(
-        {
-            "n.a.": np.nan,
-            "not avilable": np.nan,
-            -1.0: np.nan,
-            -1: np.nan,
-        },
-        inplace=True,
+
+    df[DATASET10_DATE_COL] = pd.to_datetime(
+        df[DATASET10_DATE_COL], infer_datetime_format=True, dayfirst=False
     )
-    for col in DATASET10_MONTH_COLUMNS:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    df[DATASET10_MONTH_COLUMNS] = (
-        df[DATASET10_MONTH_COLUMNS].T.interpolate(limit_direction="both").T
+
+    df[DATASET10_VALUE_COL] = (
+        df[DATASET10_VALUE_COL]
+        .astype(str)
+        .str.replace("\u00a0", "", regex=False)
+        .str.replace(",", ".", regex=False)
     )
-    df[DATASET10_MONTH_COLUMNS] = df[DATASET10_MONTH_COLUMNS].fillna(
-        df[DATASET10_MONTH_COLUMNS].mean()
+    df[DATASET10_VALUE_COL] = pd.to_numeric(df[DATASET10_VALUE_COL], errors="coerce")
+
+    df = df.dropna(
+        subset=[DATASET10_REGION_COL, DATASET10_DATE_COL, DATASET10_VALUE_COL]
     )
+
     return df
 
 
 def build_region_ts_dataset10(df: pd.DataFrame) -> pd.DataFrame:
-    region_ts = df.groupby(DATASET10_REGION_COL)[DATASET10_MONTH_COLUMNS].mean()
+    df = df.copy()
+    df["YearMonth"] = df[DATASET10_DATE_COL].dt.to_period("M").dt.to_timestamp()
+
+    region_ts = (
+        df.groupby([DATASET10_REGION_COL, "YearMonth"])[DATASET10_VALUE_COL]
+        .sum()
+        .unstack("YearMonth")
+        .sort_index(axis=1)
+    )
+
+    region_ts = region_ts.fillna(0.0)
     return region_ts
 
 
 def statistical_learning_dataset10(region_ts: pd.DataFrame) -> pd.DataFrame:
     records = []
-    n = len(DATASET10_MONTH_COLUMNS)
+    dates = region_ts.columns
+    n = len(dates)
     x = np.arange(n, dtype=float)
-    cut = int(LINEAR_TRAIN_RATIO_DS10 * n)
-    device = "cuda" if False else "cpu"
+    cut = int(DATASET10_TRAIN_RATIO * n)
 
     for region, row in region_ts.iterrows():
         y = row.values.astype(float)
@@ -69,7 +79,7 @@ def statistical_learning_dataset10(region_ts: pd.DataFrame) -> pd.DataFrame:
         x_test = x[cut:]
         y_test = y[cut:]
 
-        models = Models(device=device)
+        models = Models()
         models.fit_all(x_train, y_train)
 
         for name, m in models.models.items():
@@ -92,7 +102,6 @@ def statistical_learning_dataset10(region_ts: pd.DataFrame) -> pd.DataFrame:
                     }
                 )
 
-        months = pd.date_range("2025-01-01", periods=n, freq="M")
         if "Poly2" in models.models:
             m_plot = models.models["Poly2"]
         else:
@@ -101,21 +110,23 @@ def statistical_learning_dataset10(region_ts: pd.DataFrame) -> pd.DataFrame:
         y_pred_full = m_plot.predict(x)
 
         plt.figure(figsize=(9, 5))
-        plt.plot(months, y, marker="o", label="Sales")
-        plt.plot(months, y_pred_full, linestyle="--", label="Poly2")
-        plt.title(f"PolyRegression {region}")
+        plt.plot(dates, y, marker="o", label="Sales")
+        plt.plot(dates, y_pred_full, linestyle="--", label="Poly2")
+        plt.title(f"PolyRegression {region} (DataSet_10)")
         plt.xlabel("Month")
         plt.ylabel("Sales")
         plt.legend()
         plt.tight_layout()
         os.makedirs(os.path.join(FIGURES_DIR, "dataset10_regression"), exist_ok=True)
         plt.savefig(
-            os.path.join(FIGURES_DIR, "dataset10_regression", f"regression_{region}.png")
+            os.path.join(
+                FIGURES_DIR, "dataset10_regression", f"regression_{region}.png"
+            )
         )
         plt.close()
 
         x_horizons = generate_extrapolation_x(x_train, FORECAST_HORIZONS)
-        extr_dir = os.path.join(REPORTS_DIR, "dataset6_extrapolation")
+        extr_dir = os.path.join(REPORTS_DIR, "dataset10_extrapolation")
         os.makedirs(extr_dir, exist_ok=True)
         for model_name, m in models.models.items():
             for h, x_future in x_horizons.items():
@@ -144,7 +155,7 @@ def statistical_learning_dataset10(region_ts: pd.DataFrame) -> pd.DataFrame:
         if arima_order is not None:
             try:
                 arima_model = ARIMA(y_train, order=arima_order).fit()
-                arima_fig_dir = os.path.join(FIGURES_DIR, "dataset6_arima")
+                arima_fig_dir = os.path.join(FIGURES_DIR, "dataset10_arima")
                 os.makedirs(arima_fig_dir, exist_ok=True)
 
                 months_all = pd.date_range("2025-01-01", periods=n, freq="M")
@@ -222,14 +233,15 @@ def statistical_learning_dataset10(region_ts: pd.DataFrame) -> pd.DataFrame:
 
 
 def pipeline_dataset10():
-    df_raw = load_and_clean_dataset10(DATASET10_PATH)
+    df_raw = load_and_prepare_dataset10(DATASET10_PATH)
     region_ts = build_region_ts_dataset10(df_raw)
 
-    dates = pd.date_range("2025-01-01", periods=len(DATASET10_MONTH_COLUMNS), freq="M")
+    dates = region_ts.columns
+
     plt.figure(figsize=(10, 6))
     for region, row in region_ts.iterrows():
         plt.plot(dates, row.values, marker="o", label=region)
-    plt.title("DataSet_10")
+    plt.title("DataSet_10: monthly sales by region")
     plt.xlabel("Month")
     plt.ylabel("Sales")
     plt.legend()
@@ -238,12 +250,7 @@ def pipeline_dataset10():
     plt.savefig(os.path.join(FIGURES_DIR, "dataset10", "dataset10_time_series.png"))
     plt.close()
 
-    data = pd.DataFrame(
-        {region: region_ts.loc[region].values for region in region_ts.index},
-        index=DATASET10_MONTH_COLUMNS,
-    ).T
-    data.columns = dates
-
+    data = region_ts.copy()
     analyze_matrix(
         data=data,
         name="dataset10",

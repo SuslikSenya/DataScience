@@ -3,12 +3,13 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from statsmodels.tsa.arima.model import ARIMA
 
 from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 
-from src.config import RANDOM_STATE, N_CLUSTERS
+from src.config import RANDOM_STATE, N_CLUSTERS, DEFAULT_MA_WINDOW
 
 
 def compute_series_features(y: np.ndarray) -> dict:
