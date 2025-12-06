@@ -7,7 +7,7 @@ from src.real_data_pipeline import pipeline_real
 
 """
 Виконав: Слободенюк О.А.
-Lab_work_2, варіант 10, III рівень складності:
+Lab_work_3, варіант 10, III рівень складності:
 """
 
 
