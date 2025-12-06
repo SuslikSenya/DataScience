@@ -48,6 +48,16 @@ class Config:
     save_plot_path: str = "plots"
     save_report_path: str = "report"
 
+    #  ===== Filter Parameters =====
+    dt: float = 1.0
+
+    ab_alpha: float = 0.85
+    ab_beta: float = 0.005
+
+    abg_alpha: float = 0.85
+    abg_beta: float = 0.1
+    abg_gamma: float = 0.01
+
 
 class BaseGenerator:
     def __init__(self, config: Config):
@@ -91,6 +101,8 @@ class NoiseGenerator(BaseGenerator):
         """NOISE IMPLEMENTOR FUNCTION"""
         noise = noise.copy()
         k = int(len(noise) * self.config.anomaly_percentage / 100)
+        if k == 0:
+            return noise
         idx = np.random.choice(len(noise), k, replace=False)
         factors = np.random.choice([-4, -3, 3, 4], size=k)
         noise[idx] = noise[idx] * factors
@@ -124,14 +136,18 @@ class EntropyAnomalyDetector:
         hist = hist + 1e-12
         return entropy(hist)
 
-    def clean(self, arr: np.ndarray) -> Tuple[np.ndarray, int]:
+    def clean(self, arr: np.ndarray):
         arr = arr.copy()
         n = len(arr)
 
         clean = arr.copy()
         anomalies = np.zeros(n, dtype=bool)
 
-        H_global = self._entropy(arr, self.bins)
+        H_global = self._entropy(arr, self.bins) + 1e-12
+        med_global = np.median(arr)
+        mad_global = np.median(np.abs(arr - med_global)) + 1e-12
+
+        hard_thr = self.base_k * mad_global
 
         entropy_list = []
         k_list = []
@@ -144,13 +160,20 @@ class EntropyAnomalyDetector:
             H_local = self._entropy(window_vals, self.bins)
             entropy_list.append(H_local)
 
-            k_local = self.base_k * (1 + self.alpha * (H_local / (H_global + 1e-12)))
+            diff = (H_local - H_global) / H_global
+
+            k_local = self.base_k * (1.0 - self.alpha * diff)
+
+            k_local = float(np.clip(k_local, 0.3 * self.base_k, 1.2 * self.base_k))
             k_list.append(k_local)
 
             med = np.median(window_vals)
             mad = np.median(np.abs(window_vals - med)) + 1e-12
 
-            if abs(arr[i] - med) > k_local * mad:
+            dev_local = abs(arr[i] - med)
+            dev_global = abs(arr[i] - med_global)
+
+            if (dev_local > k_local * mad) or (dev_global > hard_thr):
                 clean[i] = med
                 anomalies[i] = True
 
@@ -159,3 +182,5 @@ class EntropyAnomalyDetector:
         self.avg_k_local = float(np.mean(k_list))
 
         return clean, self.total_anomalies
+
+

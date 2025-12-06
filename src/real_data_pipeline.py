@@ -2,14 +2,14 @@ import requests
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 import os
 
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
-from .data import Config
-from .model import LSMModel
+from .data import Config, EntropyAnomalyDetector
+from .filters import AdaptiveAlphaBetaGammaFilter, AlphaBetaGammaFilter, AlphaBetaFilter, run_filter_series
 from .metrics_plot import ModelMetrics, Plot
 from .reports import ReportGenerator
 
@@ -19,62 +19,38 @@ class NBUScrapper:
         self.currencies = currencies or ["USD", "EUR", "RUB"]
         self.session = requests.Session()
 
+    def _fetch_single(self, currency: str, date_str: str) -> Optional[float]:
         retry_strategy = Retry(
-            total=3,
+            total=5,
             backoff_factor=1,
             status_forcelist=[429, 500, 502, 503, 504],
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
+        self.session.mount("http://", HTTPAdapter(max_retries=retry_strategy))
+        self.session.mount("https://", HTTPAdapter(max_retries=retry_strategy))
 
-    def fetch_single_currency(self, currency: str, date_str: str) -> float:
-
-        url = f"https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?valcode={currency}&date={date_str}&json"
+        url = (
+            f"https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange"
+            f"?valcode={currency}&date={date_str}&json"
+        )
 
         try:
-            r = self.session.get(url, timeout=15)
-            if r.status_code == 200:
-                day = r.json()
-                if day:
-                    return float(day[0]["rate"])
-            else:
-                print(f"HTTP {r.status_code} for {currency} on {date_str}")
-        except (requests.RequestException, KeyError, IndexError, ValueError) as e:
-            print(f"Error fetching {currency} for {date_str}: {e}")
+            resp = self.session.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            return float(data[0]["rate"]) if data else None
 
-        return None
-
-    def fetch_all_currencies(self, date_str: str) -> Dict[str, float]:
-        rates = {}
-        for currency in self.currencies:
-            rate = self.fetch_single_currency(currency, date_str)
-            rates[currency] = rate
-        return rates
+        except Exception as e:
+            print("NBU fetch error: %s", e)
+            return None
 
     def fetch_range(self, start: str, end: str) -> pd.DataFrame:
-        s = datetime.strptime(start, "%Y-%m-%d")
-        e = datetime.strptime(end, "%Y-%m-%d")
+        start_dt = datetime.strptime(start, "%Y-%m-%d")
+        end_dt = datetime.strptime(end, "%Y-%m-%d")
 
         records = []
-        current_date = s
+        dt = start_dt
 
-        while current_date <= e:
-            date_str = current_date.strftime("%Y%m%d")
-            print(f"Fetching data for {current_date.date()}")
-
-            rates = self.fetch_all_currencies(date_str)
-
-            if any(rates.values()):
-                record = {"date": current_date.date()}
-                record.update(rates)
-                records.append(record)
-
-            current_date += timedelta(days=1)
-
-        df = pd.DataFrame(records)
-        if not df.empty:
-            df = df.sort_values("date")
+        df = pd.DataFrame(records).sort_values("date").reset_index(drop=True)
         return df
 
 
@@ -108,111 +84,118 @@ def pipeline_real(cfg: Config):
         loader.save(df)
 
     df = loader.load()
+    df = df.dropna(subset=cfg.currencies)
     train, test = loader.split(df, cfg.train_ratio)
 
     x_train = np.arange(len(train), dtype=float)
     x_test = np.arange(len(train), len(df), dtype=float)
 
     reports = []
+    filter_reports = []
 
     for cur in cfg.currencies:
-        y_train = train[cur].astype(float).values
+        y_train_raw = train[cur].astype(float).values
         y_test = test[cur].astype(float).values
 
+        detector = EntropyAnomalyDetector(
+            window=cfg.anomaly_window,
+            base_k=cfg.anomaly_threshold,
+            alpha=1.2,
+            bins=30,
+        )
+        y_train_clean, anomalies_count = detector.clean(y_train_raw)
+
+        ReportGenerator.save_anomaly_report(
+            detector,
+            os.path.join(
+                cfg.save_report_path,
+                f"real_anomaly_report_{cur}.csv",
+            ),
+        )
+
+        filters = {
+            "AB": AlphaBetaFilter(cfg.ab_alpha, cfg.ab_beta, cfg.dt),
+            "ABG": AlphaBetaGammaFilter(
+                cfg.abg_alpha, cfg.abg_beta, cfg.abg_gamma, cfg.dt
+            ),
+            "ABG_adaptive": AdaptiveAlphaBetaGammaFilter(
+                cfg.abg_alpha, cfg.abg_beta, cfg.abg_gamma, cfg.dt
+            ),
+        }
+
+        filtered_outputs = {}
+        filter_reports_cur = []
+
+        for name, flt in filters.items():
+            y_filt = run_filter_series(flt, y_train_clean)
+            filtered_outputs[name] = y_filt
+
+            metrics = ModelMetrics.compute(y_train_clean, y_filt)
+            metrics["bias"] = float(np.mean(y_train_clean - y_filt))
+            metrics["residual_std"] = float(np.std(y_train_clean - y_filt))
+
+            record = {
+                "filter": name,
+                "dataset": f"real_{cur}_train",
+                "metrics": metrics,
+            }
+            filter_reports.append(record)
+            filter_reports_cur.append(record)
+
+        best_report = min(
+            filter_reports_cur,
+            key=lambda r: r["metrics"]["residual_std"],
+        )
+        best_filter_name = best_report["filter"]
+        best_filter_output = filtered_outputs[best_filter_name]
+
+        Plot.plot_best_filter_real(
+            x_train,
+            y_train_clean,
+            best_filter_name,
+            best_filter_output,
+            os.path.join(
+                cfg.save_plot_path,
+                "filters",
+                f"{cur}_{best_filter_name}_real.png",
+            ),
+        )
+
         for name, model in cfg.models.items():
-            model.fit(x_train, y_train)
+            model.fit(x_train, y_train_clean)
+
             pred_train = model.predict(x_train)
             pred_test = model.predict(x_test)
 
+            train_metrics = ModelMetrics.compute(y_train_clean, pred_train)
+            test_metrics = ModelMetrics.compute(y_test, pred_test)
+
             rep = {
                 "model": f"{cur}_{name}",
-                "train_metrics": ModelMetrics.compute(y_train, pred_train),
-                "test_metrics": ModelMetrics.compute(y_test, pred_test),
+                "train_metrics": train_metrics,
+                "test_metrics": test_metrics,
             }
-
             reports.append(rep)
 
+            plot_path = os.path.join(
+                cfg.save_plot_path,
+                name,
+                f"{cur}_real.png",
+            )
             Plot.plot_data(
                 x_train,
-                y_train,
-                y_train,
+                y_train_clean,
+                y_train_clean,
                 pred_train,
                 x_test,
                 pred_test,
                 y_test,
-                fname=f"{cfg.save_plot_path}/{cur}_{name}_real.png",
+                fname=plot_path,
             )
+
     ReportGenerator.save_model_report(
-        reports, f"{cfg.save_report_path}/real_model_report.csv"
+        reports, os.path.join(cfg.save_report_path, "real_model_report.csv")
     )
-
-
-class RealDataPipeline:
-    def __init__(self, cfg: Config):
-        self.cfg = cfg
-        self.scraper = NBUScrapper()
-        self.loader = DataLoader(cfg.save_path)
-
-    def scrape_and_save(self):
-        if os.path.exists(self.cfg.save_path):
-            print(f"Файл {self.cfg.save_path} вже існує. Використовую існуючі дані.")
-            return
-
-        print(f"Файл {self.cfg.save_path} не знайдено. Завантажую нові дані...")
-        df = self.scraper.fetch_range(self.cfg.start_date, self.cfg.end_date)
-        self.loader.save(df)
-        print(f"Збережено дані для валют: {list(df.columns[1:])}")
-
-    def forward(self, target_currency: str = "USD") -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        df = self.loader.load()
-        train, test = self.loader.split(df, self.cfg.train_ratio)
-
-        x_train = np.arange(len(train), dtype=float)
-        x_test = np.arange(len(train), len(df), dtype=float)
-
-        y_train = train[target_currency].values
-        y_test = test[target_currency].values
-
-        model = LSMModel(self.cfg.is_linear).fit(x_train, y_train)
-        pred_train = model.predict(x_train)
-        pred_test = model.predict(x_test)
-
-        plot_data = {
-            "x_train": x_train,
-            "y_train": y_train,
-            "trend_train": y_train,
-            "x_test": x_test,
-            "trend_test": y_test,
-            "pred_train": pred_train,
-            "pred_test": pred_test,
-            "currency": target_currency
-        }
-
-        logging_data = {
-            "config": self.cfg,
-            "currency": target_currency,
-            "train_metrics": ModelMetrics.calculate(y_train, pred_train),
-            "test_metrics": ModelMetrics.calculate(y_test, pred_test),
-            "pred_coef": model.pred_coef.tolist(),
-            "available_currencies": list(df.columns[1:])
-        }
-
-        return plot_data, logging_data
-
-    def get_currency_correlation(self) -> pd.DataFrame:
-        """Отримати кореляцію між валютами"""
-        df = self.loader.load()
-        currency_columns = [col for col in df.columns if col != 'date']
-        return df[currency_columns].corr()
-
-    def save_plot(self, plot_data: Dict[str, Any], fname: str):
-        Plot.plot_data(
-            x_train=plot_data["x_train"],
-            y_train=plot_data["y_train"],
-            trend_train=plot_data["trend_train"],
-            predictions_train=plot_data["pred_train"],
-            x_test=plot_data["x_test"],
-            predictions_test=plot_data["pred_test"],
-            trend_test=plot_data["trend_test"],
-            fname=fname,
-        )
+    ReportGenerator.save_filter_report(
+        filter_reports, os.path.join(cfg.save_report_path, "real_filter_report.csv")
+    )

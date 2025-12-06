@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Dict
@@ -39,13 +41,14 @@ class Plot:
                   trend_test=None,
                   fname: str = None, ):
         """2D plotiing function"""
+        os.makedirs(os.path.dirname(fname), exist_ok=True)
         plt.figure(figsize=(12, 6))
-        plt.plot(x_train, y_train, label="train data")
-        plt.plot(x_train, trend_train, label="trend", linestyle="--")
+        plt.plot(x_train, y_train, label="train data", linewidth=1)
+        plt.plot(x_train, trend_train, label="train trend", linestyle="--")
         plt.plot(x_train, predictions_train, label="train pred")
 
         split_x = x_train.max()
-        plt.axvline(x=split_x, color="black", linewidth=1.3)
+        plt.axvline(x=split_x, color="black", linewidth=1.0)
         plt.text(split_x, plt.ylim()[1], "split", ha="right", va="top")
 
         plt.plot(x_test, predictions_test, label="test pred")
@@ -57,17 +60,54 @@ class Plot:
         plt.savefig(fname)
         plt.close()
 
+    @staticmethod
+    def plot_noise(noise_raw, noise_clean, filename):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        x = np.arange(len(noise_raw))
+        plt.figure(figsize=(12, 4))
+        plt.plot(x, noise_raw, label="raw noise", alpha=0.7)
+        plt.plot(x, noise_clean, label="clean noise", alpha=0.7)
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(filename)
+        plt.close()
 
     @staticmethod
-    def plot_hist(fname: str,
-                  arr: np.ndarray,
-                  n: int = 50):
-        """Histogram plotting function"""
-        plt.figure(figsize=(10, 7))
-        plt.hist(arr, bins=n, color="b")
-        plt.xlabel("Value")
-        plt.ylabel("Frequency")
-        plt.grid()
-        plt.savefig(f"{fname}_hist")
-        plt.show()
+    def plot_best_filter_synthetic(
+        x,
+        y_noisy,
+        trend,
+        best_name: str,
+        best_arr: np.ndarray,
+        filename: str,
+    ):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        plt.figure(figsize=(12, 6))
+        plt.plot(x, y_noisy, label="noisy train", alpha=0.5)
+        plt.plot(x, trend, label="true trend", linestyle="--")
+        plt.plot(x, best_arr, label=f"best filter: {best_name}")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(filename)
         plt.close()
+
+    @staticmethod
+    def plot_best_filter_real(
+        x,
+        y,
+        best_name: str,
+        best_arr: np.ndarray,
+        filename: str,
+    ):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        plt.figure(figsize=(12, 6))
+        plt.plot(x, y, label="raw series", alpha=0.5)
+        plt.plot(x, best_arr, label=f"best filter: {best_name}")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(filename)
+        plt.close()
+

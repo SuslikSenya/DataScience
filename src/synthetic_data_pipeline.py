@@ -1,9 +1,11 @@
+import os
+
 import numpy as np
 from typing import Dict, Any
 
 from .data import Config, TrendGenerator, NoiseGenerator, EntropyAnomalyDetector
+from .filters import run_filter_series, AlphaBetaFilter, AlphaBetaGammaFilter, AdaptiveAlphaBetaGammaFilter
 from .metrics_plot import ModelMetrics, DataMetrics, Plot
-from .model import LSMModel
 from .reports import ReportGenerator
 
 
@@ -39,7 +41,7 @@ def pipeline_synthetic(cfg: Config):
 
     # Save anomaly report
     ReportGenerator.save_anomaly_report(
-        detector, f"{cfg.save_report_path}/anomaly_report.csv"
+        detector, os.path.join(cfg.save_report_path, "synthetic_anomaly_report.csv")
     )
 
     data_metrics = {
@@ -50,7 +52,59 @@ def pipeline_synthetic(cfg: Config):
     }
 
     ReportGenerator.save_data_report(
-        data_metrics, f"{cfg.save_report_path}/data_report.csv"
+        data_metrics, os.path.join(cfg.save_report_path, "synthetic_data_report.csv")
+    )
+
+    Plot.plot_noise(
+        noise_raw,
+        noise_clean,
+        os.path.join(cfg.save_plot_path, "noise", "synthetic_noise.png"),
+    )
+
+    filters = {
+        "AB": AlphaBetaFilter(cfg.ab_alpha, cfg.ab_beta, cfg.dt),
+        "ABG": AlphaBetaGammaFilter(cfg.abg_alpha, cfg.abg_beta, cfg.abg_gamma, cfg.dt),
+        "ABG_adaptive": AdaptiveAlphaBetaGammaFilter(
+            cfg.abg_alpha, cfg.abg_beta, cfg.abg_gamma, cfg.dt
+        ),
+    }
+
+    filter_outputs = {}
+    filter_reports = []
+
+    for name, flt in filters.items():
+        y_filt = run_filter_series(flt, y_train)
+        filter_outputs[name] = y_filt
+
+        metrics = ModelMetrics.compute(trend_train, y_filt)
+        metrics["bias"] = float(np.mean(trend_train - y_filt))
+
+        filter_reports.append(
+            {
+                "filter": name,
+                "dataset": "synthetic_train",
+                "metrics": metrics,
+            }
+        )
+
+    ReportGenerator.save_filter_report(
+        filter_reports,
+        os.path.join(cfg.save_report_path, "synthetic_filter_report.csv"),
+    )
+
+    best_report = min(filter_reports, key=lambda r: r["metrics"]["mse"])
+    best_filter_name = best_report["filter"]
+    best_filter_output = filter_outputs[best_filter_name]
+
+    Plot.plot_best_filter_synthetic(
+        x_train,
+        y_train,
+        trend_train,
+        best_filter_name,
+        best_filter_output,
+        os.path.join(
+            cfg.save_plot_path, "filters", f"{best_filter_name}_synthetic.png"
+        ),
     )
 
     reports = []
@@ -81,66 +135,3 @@ def pipeline_synthetic(cfg: Config):
     ReportGenerator.save_model_report(
         reports, f"{cfg.save_report_path}/model_report.csv"
     )
-
-class SyntheticDataPipeline:
-    def __init__(
-            self, config: Config, add_anomalies: bool = False
-    ):
-        """Pipeline initialization function"""
-
-        print("Synthetic data pipeline initialized")
-        self.cfg = config
-        self.add_anomalies = add_anomalies
-        self.trends = TrendGenerator(config)
-        self.noises = NoiseGenerator(config)
-
-    def forward(self,
-                trend_type: str,
-                noise_type: str,
-                model_linear: bool) -> Dict[str, Any]:
-        """Pipeline forward method"""
-        print("Generating data...\n")
-        x_train = np.linspace(*self.cfg.x_range_train, self.cfg.n_train)
-        x_test = np.linspace(*self.cfg.x_range_test, self.cfg.n_test)
-
-        trend_train = self.trends.generate(x_train, trend_type)
-        trend_test = self.trends.generate(x_test, trend_type)
-
-        noise_train = self.noises.generate(noise_type, self.cfg.n_train, self.add_anomalies)
-        y_train = trend_train + noise_train
-
-        Plot.plot_hist(fname='histogram', arr=noise_train)
-        print("Fitting the model...\n")
-        model = LSMModel(model_linear).fit(x_train, y_train)
-
-        print("Predicting...\n")
-        pred_train = model.predict(x_train)
-        pred_test = model.predict(x_test)
-
-        plot_data_dict = {
-            "x_train": x_train,
-            "y_train": y_train,
-            "trend_train": trend_train,
-            "x_test": x_test,
-            "trend_test": trend_test,
-            "pred_train": pred_train,
-            "pred_test": pred_test,
-        }
-
-        log_dict = {"data_metrics": DataMetrics.calculate(name=noise_type, arr=noise_train),
-                    "train_metrics": ModelMetrics.calculate(trend_train, pred_train),
-                    "test_metrics": ModelMetrics.calculate(trend_test, pred_test),
-                    "pred_coef": model.pred_coef.tolist(), }
-
-        return plot_data_dict, log_dict
-
-    @staticmethod
-    def save_plot(plot_dict: Dict[str, Any]):
-        """Creating and saving the plot"""
-        Plot.plot_data(x_train=plot_dict["x_train"],
-                       y_train=plot_dict["y_train"], trend_train=plot_dict["trend_train"],
-                       predictions_train=plot_dict["pred_train"],
-                       x_test=plot_dict["x_test"],
-                       predictions_test=plot_dict["pred_test"],
-                       trend_test=plot_dict["trend_test"],
-                       fname='Data')
