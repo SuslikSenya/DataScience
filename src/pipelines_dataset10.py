@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from statsmodels.tsa.arima.model import ARIMA
+
 from src.config import (
     FIGURES_DIR,
     REPORTS_DIR,
@@ -13,14 +15,14 @@ from src.config import (
     TS_DECOMP_MODEL,
     TS_DECOMP_PERIOD_DS10,
     TS_SYNTHETIC_YEARS,
-    TS_NOISE_SCALE,
+    TS_NOISE_SCALE, FORECAST_HORIZONS, ARIMA_Q_RANGE, ARIMA_D_RANGE, ARIMA_P_RANGE,
 )
 
 from src.models import Models
 from src.ts_analysis import (
     metrics_regression,
     analyze_matrix,
-    decompose_and_plot,
+    decompose_and_plot, generate_extrapolation_x, select_best_arima_order,
 )
 
 
@@ -111,6 +113,104 @@ def statistical_learning_dataset10(region_ts: pd.DataFrame) -> pd.DataFrame:
             os.path.join(FIGURES_DIR, "dataset10_regression", f"regression_{region}.png")
         )
         plt.close()
+
+        x_horizons = generate_extrapolation_x(x_train, FORECAST_HORIZONS)
+        extr_dir = os.path.join(REPORTS_DIR, "dataset6_extrapolation")
+        os.makedirs(extr_dir, exist_ok=True)
+        for model_name, m in models.models.items():
+            for h, x_future in x_horizons.items():
+                y_future = m.predict(x_future)
+                df_extr = pd.DataFrame(
+                    {
+                        "region": region,
+                        "model": model_name,
+                        "horizon": h,
+                        "step": np.arange(len(x_train), len(x_train) + len(x_future)),
+                        "y_pred": y_future,
+                    }
+                )
+                df_extr.to_csv(
+                    os.path.join(
+                        extr_dir,
+                        f"{region}_{model_name}_h{h}.csv",
+                    ),
+                    index=False,
+                )
+
+        arima_order, arima_aic, arima_mse = select_best_arima_order(
+            y_train, ARIMA_P_RANGE, ARIMA_D_RANGE, ARIMA_Q_RANGE, val_ratio=0.2
+        )
+
+        if arima_order is not None:
+            try:
+                arima_model = ARIMA(y_train, order=arima_order).fit()
+                arima_fig_dir = os.path.join(FIGURES_DIR, "dataset6_arima")
+                os.makedirs(arima_fig_dir, exist_ok=True)
+
+                months_all = pd.date_range("2025-01-01", periods=n, freq="M")
+                train_months = months_all[:cut]
+                test_months = months_all[cut:]
+
+                x_horizons_reg = generate_extrapolation_x(x_train, FORECAST_HORIZONS)
+
+                for h, x_future in x_horizons_reg.items():
+                    n_steps = len(x_future)
+                    y_future = np.asarray(arima_model.forecast(steps=n_steps), float)
+
+                    last_train_month = train_months[-1]
+                    future_months = pd.date_range(
+                        last_train_month + pd.offsets.MonthEnd(1),
+                        periods=n_steps,
+                        freq="M",
+                    )
+
+                    df_extr_arima = pd.DataFrame(
+                        {
+                            "region": region,
+                            "horizon": h,
+                            "date": future_months,
+                            "y_pred": y_future,
+                        }
+                    )
+                    df_extr_arima.to_csv(
+                        os.path.join(
+                            extr_dir,
+                            f"{region}_ARIMA_h{h}.csv",
+                        ),
+                        index=False,
+                    )
+
+                    plt.figure(figsize=(9, 5))
+                    plt.plot(train_months, y_train, marker="o", label="train")
+                    if len(y_test) > 0:
+                        plt.plot(test_months, y_test, marker="o", label="test")
+                    plt.axvline(train_months[-1], color="black", linewidth=1.0)
+
+                    plt.plot(
+                        future_months,
+                        y_future,
+                        marker="o",
+                        label=f"ARIMA forecast (h={h})",
+                    )
+
+                    plt.title(
+                        f"{region}: ARIMA extrapolation, horizon={h}, order={arima_order}"
+                    )
+                    plt.xlabel("Month")
+                    plt.ylabel("Sales")
+                    plt.legend()
+                    plt.grid(True)
+                    plt.tight_layout()
+                    plt.savefig(
+                        os.path.join(
+                            arima_fig_dir,
+                            f"{region}_arima_extrapolation_h{h}.png",
+                        )
+                    )
+                    plt.close()
+
+            except Exception as e:
+                print(f"[WARN] Dataset6 ARIMA failed for {region}: {e}")
 
     df_metrics = pd.DataFrame(records)
     os.makedirs(os.path.join(REPORTS_DIR, "dataset10"), exist_ok=True)

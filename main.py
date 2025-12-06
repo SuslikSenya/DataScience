@@ -7,7 +7,7 @@ from src.pipelines_synthetic import pipeline_synthetic
 
 """
 Виконав: Слободенюк О.А.
-Lab_work_3, варіант 10, III рівень складності:
+Lab_work_5, варіант 10, III рівень складності:
 """
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -19,6 +19,7 @@ def main():
     print("Choose pipeline:")
     print("1 - Synthetic")
     print("2 - Real NBU")
+    print("3 - DataSet_10")
     print("Enter - all")
 
     choice = input("> ").strip()
@@ -27,6 +28,8 @@ def main():
         pipeline_synthetic()
     elif choice == "2":
         pipeline_real_nbu()
+    elif choice == "3":
+        pipeline_dataset10()
     elif choice == "":
         pipeline_synthetic()
         pipeline_real_nbu()

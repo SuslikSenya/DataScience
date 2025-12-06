@@ -111,6 +111,112 @@ def metrics_regression(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     return {"mse": mse, "mae": mae, "r2": r2}
 
 
+
+def split_train_val_series(y: np.ndarray, val_ratio: float = 0.2):
+    y = np.asarray(y, dtype=float)
+    n = len(y)
+    if n < 5:
+        return y, np.array([], dtype=float)
+    cut = max(1, int((1.0 - val_ratio) * n))
+    return y[:cut], y[cut:]
+
+
+def select_best_ma_window(y: np.ndarray, candidate_windows, val_ratio: float = 0.2):
+    from math import inf
+
+    y_train, y_val = split_train_val_series(y, val_ratio)
+    if len(y_val) == 0:
+        return DEFAULT_MA_WINDOW, float("nan")
+
+    best_w = None
+    best_mse = inf
+
+    for w in candidate_windows:
+        if w <= 0:
+            continue
+        history = np.asarray(y_train, dtype=float)
+        preds = []
+        hist_list = history.tolist()
+        for _ in range(len(y_val)):
+            if len(hist_list) < w:
+                preds.append(float(np.mean(hist_list)))
+            else:
+                preds.append(float(np.mean(hist_list[-w:])))
+            hist_list.append(preds[-1])
+        m = metrics_regression(y_val, np.asarray(preds, dtype=float))
+        if m["mse"] < best_mse:
+            best_mse = m["mse"]
+            best_w = w
+
+    if best_w is None:
+        best_w = DEFAULT_MA_WINDOW
+
+    return best_w, best_mse
+
+
+def select_best_arima_order(
+    y: np.ndarray,
+    p_range,
+    d_range,
+    q_range,
+    val_ratio: float = 0.2,
+):
+    from math import inf
+
+    y_train, y_val = split_train_val_series(y, val_ratio)
+    best_order = None
+    best_aic = inf
+    best_mse = inf
+
+    use_full_for_mse = len(y_val) == 0
+
+    for p in p_range:
+        for d in d_range:
+            for q in q_range:
+                try:
+                    model = ARIMA(y_train, order=(p, d, q)).fit()
+                except Exception:
+                    continue
+
+                aic = model.aic
+                if use_full_for_mse:
+                    forecast = model.predict(start=0, end=len(y_train) - 1)
+                    m = metrics_regression(y_train, np.asarray(forecast, dtype=float))
+                else:
+                    steps = len(y_val)
+                    forecast = model.forecast(steps=steps)
+                    m = metrics_regression(y_val, np.asarray(forecast, dtype=float))
+
+                mse_val = m["mse"]
+
+                if (aic < best_aic) or (aic == best_aic and mse_val < best_mse):
+                    best_aic = aic
+                    best_mse = mse_val
+                    best_order = (p, d, q)
+
+    return best_order, best_aic, best_mse
+
+
+def generate_extrapolation_x(x_train: np.ndarray, horizons) -> dict:
+    x_train = np.asarray(x_train, dtype=float)
+    if len(x_train) < 2:
+        return {}
+
+    x_min, x_max = x_train[0], x_train[-1]
+    interval = x_max - x_min
+    if interval <= 0:
+        interval = float(len(x_train))
+
+    out = {}
+    for h in horizons:
+        n_steps = max(1, int(len(x_train) * float(h)))
+        x_future = np.linspace(
+            x_max, x_max + float(h) * interval, n_steps, endpoint=False
+        )
+        out[h] = x_future
+    return out
+
+
 def analyze_matrix(
     data: pd.DataFrame,
     name: str,

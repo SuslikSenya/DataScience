@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from src.config import DEFAULT_MA_WINDOW
+
 
 class BaseTSModel:
     def fit(self, x: np.ndarray, y: np.ndarray):
@@ -30,6 +32,28 @@ class SklearnPolyTSModel(BaseTSModel):
         return self.model.predict(X)
 
 
+class MovingAverageTSModel(BaseTSModel):
+    def __init__(self, window: int = DEFAULT_MA_WINDOW):
+        self.window = int(window)
+        self.history = None
+
+    def fit(self, x: np.ndarray, y: np.ndarray):
+        self.history = np.asarray(y, dtype=float)
+
+    def predict(self, x: np.ndarray) -> np.ndarray:
+        if self.history is None:
+            return np.zeros_like(x, dtype=float)
+        preds = []
+        hist = self.history.tolist()
+        for _ in range(len(x)):
+            if len(hist) < self.window:
+                preds.append(float(np.mean(hist)))
+            else:
+                preds.append(float(np.mean(hist[-self.window:])))
+            hist.append(preds[-1])
+        return np.asarray(preds, dtype=float)
+
+
 class TorchNNRegressor(nn.Module):
     def __init__(self, input_dim: int = 1, hidden_dim: int = 32, output_dim: int = 1):
         super().__init__()
@@ -47,11 +71,11 @@ class TorchNNRegressor(nn.Module):
 
 class TorchNNTSModel(BaseTSModel):
     def __init__(
-        self,
-        hidden_dim: int = 32,
-        lr: float = 1e-3,
-        epochs: int = 500,
-        device: str = "cpu",
+            self,
+            hidden_dim: int = 32,
+            lr: float = 1e-3,
+            epochs: int = 500,
+            device: str = "cpu",
     ):
         self.hidden_dim = hidden_dim
         self.lr = lr

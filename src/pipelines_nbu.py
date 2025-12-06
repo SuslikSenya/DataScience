@@ -87,6 +87,8 @@ def pipeline_real_nbu():
     anomaly_rows = []
     all_series = {}
 
+    extr_dir = os.path.join(REPORTS_DIR, "real_nbu_extrapolation")
+    os.makedirs(extr_dir, exist_ok=True)
     for cur in NBU_CURRENCIES:
         y_train_raw = train[cur].astype(float).values
         y_test = test[cur].astype(float).values
@@ -163,6 +165,27 @@ def pipeline_real_nbu():
                         }
                     )
 
+        x_horizons = generate_extrapolation_x(x_train, FORECAST_HORIZONS)
+        for model_name, m in models.models.items():
+            for h, x_future in x_horizons.items():
+                y_future = m.predict(x_future)
+                df_extr = pd.DataFrame(
+                    {
+                        "currency": cur,
+                        "model": model_name,
+                        "horizon": h,
+                        "step": np.arange(len(x_train), len(x_train) + len(x_future)),
+                        "y_pred": y_future,
+                    }
+                )
+                df_extr.to_csv(
+                    os.path.join(
+                        extr_dir,
+                        f"{cur}_{model_name}_h{h}.csv",
+                    ),
+                    index=False,
+                )
+
         dates_full = df["date"].values
         y_full = df[cur].astype(float).values
         if "Poly2" in models.models:
@@ -193,6 +216,85 @@ def pipeline_real_nbu():
             model=TS_DECOMP_MODEL,
             period=TS_DECOMP_PERIOD_NBU,
         )
+
+        arima_order, arima_aic, arima_mse = select_best_arima_order(
+            y_train_smooth, ARIMA_P_RANGE, ARIMA_D_RANGE, ARIMA_Q_RANGE, val_ratio=0.2
+        )
+
+        if arima_order is not None:
+            try:
+                arima_model = ARIMA(y_train_smooth, order=arima_order).fit()
+                arima_fig_dir = os.path.join(FIGURES_DIR, "real_nbu_arima")
+                os.makedirs(arima_fig_dir, exist_ok=True)
+
+                x_horizons_cur = generate_extrapolation_x(x_train, FORECAST_HORIZONS)
+
+                for h, x_future in x_horizons_cur.items():
+                    n_steps = len(x_future)
+                    y_future = np.asarray(arima_model.forecast(steps=n_steps), float)
+
+                    last_train_date = train["date"].iloc[-1]
+                    future_dates = pd.date_range(
+                        last_train_date + timedelta(days=1),
+                        periods=n_steps,
+                        freq="D",
+                    )
+
+                    df_extr_arima = pd.DataFrame(
+                        {
+                            "currency": cur,
+                            "horizon": h,
+                            "date": future_dates,
+                            "y_pred": y_future,
+                        }
+                    )
+                    df_extr_arima.to_csv(
+                        os.path.join(extr_dir, f"{cur}_ARIMA_h{h}.csv"),
+                        index=False,
+                    )
+
+                    plt.figure(figsize=(12, 6))
+                    plt.plot(train["date"], y_train_smooth, label="train smoothed")
+                    plt.plot(test["date"], y_test, label="test real", alpha=0.5)
+                    plt.axvline(train["date"].iloc[-1], color="black", linewidth=1.0)
+
+                    if len(test) > 0:
+                        last_test_date = test["date"].iloc[-1]
+                        mask_overlap = future_dates <= last_test_date
+                    else:
+                        mask_overlap = np.zeros_like(y_future, dtype=bool)
+
+                    if mask_overlap.any():
+                        plt.plot(
+                            future_dates[mask_overlap],
+                            y_future[mask_overlap],
+                            label=f"ARIMA forecast (overlap, h={h})",
+                        )
+                    if (~mask_overlap).any():
+                        plt.plot(
+                            future_dates[~mask_overlap],
+                            y_future[~mask_overlap],
+                            linestyle="--",
+                            label=f"ARIMA forecast (beyond, h={h})",
+                        )
+
+                    plt.title(
+                        f"NBU {cur}: ARIMA extrapolation, horizon={h}, order={arima_order}"
+                    )
+                    plt.xlabel("date")
+                    plt.ylabel("rate")
+                    plt.legend()
+                    plt.grid(True)
+                    plt.tight_layout()
+                    plt.savefig(
+                        os.path.join(
+                            arima_fig_dir, f"{cur}_arima_extrapolation_h{h}.png"
+                        )
+                    )
+                    plt.close()
+
+            except Exception as e:
+                print(f"[WARN] NBU ARIMA failed for {cur}: {e}")
 
     os.makedirs(os.path.join(REPORTS_DIR, "real_nbu"), exist_ok=True)
     df_metrics = pd.DataFrame(rows_metrics)
