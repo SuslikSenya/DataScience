@@ -1,5 +1,5 @@
 metric,value
-noise_raw_mean,-0.1252072821860924
-noise_raw_std,3.619181025487207
-noise_clean_std,1.7406948743711963
-anomalies_removed,69.0
+noise_raw_mean,-0.1124683519605616
+noise_raw_std,3.0047630368020193
+noise_clean_std,1.5137002616895134
+anomalies_removed,76.0
