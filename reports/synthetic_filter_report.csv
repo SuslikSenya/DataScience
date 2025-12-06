@@ -1,0 +1,13 @@
+filter,dataset,metric,value
+AB,synthetic_train,mse,2.8336732793365753
+AB,synthetic_train,mae,1.3606140662313364
+AB,synthetic_train,r2,0.9999966941552451
+AB,synthetic_train,bias,0.6906846680134517
+ABG,synthetic_train,mse,2.271547603004887
+ABG,synthetic_train,mae,1.2096085413700444
+ABG,synthetic_train,r2,0.9999973499472279
+ABG,synthetic_train,bias,0.09487013162754789
+ABG_adaptive,synthetic_train,mse,1.4094704482970877
+ABG_adaptive,synthetic_train,mae,0.9560561307090325
+ABG_adaptive,synthetic_train,r2,0.9999983556712333
+ABG_adaptive,synthetic_train,bias,0.1005629574725853

@@ -1,50 +1,41 @@
-import os
+import torch
 
-from src.data import Config
-from src.model import SklearnModel, TorchNNModel
-from src.synthetic_data_pipeline import pipeline_synthetic
-from src.real_data_pipeline import pipeline_real
+from src.dirs import ensure_dirs
+from src.pipelines_dataset10 import pipeline_dataset10
+from src.pipelines_nbu import pipeline_real_nbu
+from src.pipelines_synthetic import pipeline_synthetic
 
 """
 Виконав: Слободенюк О.А.
-Lab_work_1, варіант 10, III рівень складності:
-
-Закон зміни похибки – рівномірний, нормальний.
-Закон зміни досліджуваного процесу – кубічний, лінійний.
-Реальні дані – 3 показники на вибір.
+Lab_work_3, варіант 10, III рівень складності:
 """
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def main():
-    cfg = Config()
-
-    cfg.models["Sklearn"] = SklearnModel(cfg.trend_type)
-    cfg.models["TorchNN"] = TorchNNModel(
-        hidden_dim=64,
-        lr=1e-3,
-        epochs=1000,
-        device="cpu",
-    )
-
-    os.makedirs(cfg.save_report_path, exist_ok=True)
-    os.makedirs(cfg.save_plot_path, exist_ok=True)
+    ensure_dirs()
 
     print("Choose pipeline:")
     print("1 - Synthetic")
-    print("2 - Real")
-    print("None - both")
+    print("2 - Real NBU")
+    print("Enter - all")
 
-    ch = input("> ").strip()
-    if ch == "1":
-        pipeline_synthetic(cfg)
-    elif ch == "2":
-        pipeline_real(cfg)
-    elif ch == "":
-        pipeline_synthetic(cfg)
-        pipeline_real(cfg)
+    choice = input("> ").strip()
+
+    if choice == "1":
+        pipeline_synthetic()
+    elif choice == "2":
+        pipeline_real_nbu()
+    elif choice == "":
+        pipeline_synthetic()
+        pipeline_real_nbu()
+        pipeline_dataset10()
     else:
-        print("Invalid choice")
+        print("[ERROR]")
 
 
 if __name__ == "__main__":
+    main()
+
     main()

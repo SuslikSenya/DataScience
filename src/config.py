@@ -1,0 +1,69 @@
+import os
+
+DATA_DIR = "data"
+FIGURES_DIR = "figures"
+REPORTS_DIR = "reports"
+
+SYN_N_TRAIN = 500
+SYN_N_TEST = 200
+SYN_X_RANGE_TRAIN = (0.0, 50.0)
+SYN_X_RANGE_TEST = (51.0, 100.0)
+SYN_TREND_TYPE = "cubic"
+TREND_CFG = {
+    "linear": {"a": 1.5, "b": 10.0},
+    "cubic": {"a": 0.02, "b": 0.2, "c": 5.0, "d": 2.0},
+}
+NOISE_CFG = {
+    "normal": {"mu": 0.0, "sigma": 2.0},
+    "uniform": {},
+}
+SYN_NOISE_TYPE = "normal"
+SYN_ADD_ANOMALIES = True
+SYN_ANOMALY_PERCENTAGE = 0.15
+
+NBU_CURRENCIES = ["USD", "EUR", "RUB"]
+NBU_START_DATE = "2023-01-01"
+NBU_END_DATE = "2025-12-31"
+NBU_TRAIN_RATIO = 0.7
+NBU_CSV_PATH = os.path.join(DATA_DIR, "multi_currency_data.csv")
+
+DATASET10_PATH = os.path.join(DATA_DIR, "Data_Set_10.xls - Orders.csv")
+
+TS_DECOMP_MODEL = "additive"
+TS_DECOMP_PERIOD_SYN = 30
+TS_DECOMP_PERIOD_NBU = 30
+TS_DECOMP_PERIOD_DS10 = 12
+TS_SYNTHETIC_YEARS = 3
+TS_NOISE_SCALE = 0.5
+
+DATASET10_MONTH_COLUMNS = [
+    "JANUARY",
+    "FEBRUARY",
+    "MARCH",
+    "APRIL",
+    "MAY",
+    "JUNE",
+    "JULY",
+    "AUGUST",
+    "SEPTEMBER",
+    "OCTOBER",
+    "NOVEMBER",
+    "DECEMBER",
+]
+DATASET10_REGION_COL = "SALES_BY_REGION"
+
+RANDOM_STATE = 42
+N_CLUSTERS = 3
+LINEAR_TRAIN_RATIO_DS10 = 0.7
+
+ANOMALY_WINDOW = 10
+ANOMALY_BASE_K = 3.0
+ANOMALY_ALPHA = 1.5
+ANOMALY_BINS = 30
+
+AB_ALPHA = 0.85
+AB_BETA = 0.005
+ABG_ALPHA = 0.85
+ABG_BETA = 0.1
+ABG_GAMMA = 0.01
+DT = 1.0
