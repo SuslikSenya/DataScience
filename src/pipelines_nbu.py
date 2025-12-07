@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import requests
+from statsmodels.tsa.arima.model import ARIMA
 
 from src.config import (
     FIGURES_DIR,
@@ -25,8 +26,9 @@ from src.config import (
     TS_DECOMP_MODEL,
     TS_DECOMP_PERIOD_NBU,
     TS_SYNTHETIC_YEARS,
-    TS_NOISE_SCALE,
+    TS_NOISE_SCALE, ARIMA_D_RANGE, ARIMA_Q_RANGE, ARIMA_P_RANGE, FORECAST_HORIZONS,
 )
+from src.exponential_smoothing import run_exp_smoothing_nbu_for_currency
 
 from src.filters import (
     EntropyAnomalyDetector,
@@ -34,7 +36,8 @@ from src.filters import (
     run_filter_series,
 )
 from src.models import Models
-from src.ts_analysis import metrics_regression, analyze_matrix, decompose_and_plot
+from src.ts_analysis import metrics_regression, analyze_matrix, decompose_and_plot, select_best_arima_order, \
+    generate_extrapolation_x
 
 
 def fetch_nbu_rates(currencies, start_date: str, end_date: str) -> pd.DataFrame:
@@ -145,9 +148,19 @@ def pipeline_real_nbu():
         )
         plt.close()
 
+        es_rows = run_exp_smoothing_nbu_for_currency(
+            train["date"].values,
+            test["date"].values
+            if len(test) > 0
+            else np.array([], dtype="datetime64[ns]"),
+            y_train_smooth,
+            y_test,
+            cur,
+        )
+        rows_metrics.extend(es_rows)
+
         models = Models(device="cpu")
         models.fit_all(x_train, y_train_smooth)
-
         for name, m in models.models.items():
             y_pred_train = m.predict(x_train)
             y_pred_test = m.predict(x_test)
@@ -158,6 +171,7 @@ def pipeline_real_nbu():
                     rows_metrics.append(
                         {
                             "currency": cur,
+                            "family": "regression",
                             "model": name,
                             "dataset": dataset,
                             "metric": k,

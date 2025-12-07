@@ -1,4 +1,3 @@
-#syntetic_core.py
 import numpy as np
 
 from src.config import TREND_CFG, NOISE_CFG

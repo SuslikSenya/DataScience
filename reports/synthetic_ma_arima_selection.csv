@@ -1,0 +1,4 @@
+method,param,value,metric,score
+MA,window,3,mse_val,657237.7113343513
+ARIMA,order,"(2, 2, 2)",mse_val,19252.916991759947
+ARIMA,order,"(2, 2, 2)",aic,1677.7715261627213

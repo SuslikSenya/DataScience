@@ -3,12 +3,13 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from statsmodels.tsa.arima.model import ARIMA
 
 from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 
-from src.config import RANDOM_STATE, N_CLUSTERS
+from src.config import RANDOM_STATE, N_CLUSTERS, DEFAULT_MA_WINDOW
 
 
 def compute_series_features(y: np.ndarray) -> dict:
@@ -215,6 +216,19 @@ def generate_extrapolation_x(x_train: np.ndarray, horizons) -> dict:
         )
         out[h] = x_future
     return out
+
+
+# TODO: CHANGE "exponential" or "regression"
+def choose_smoothing_family(features: dict) -> str:
+    cv = features.get("cv", float("nan"))
+    lag1 = features.get("lag1_autocorr", float("nan"))
+    if not np.isnan(lag1) and abs(lag1) > 0.7:
+        if not np.isnan(cv) and cv < 0.5:
+            return "exponential"
+        return "mixed"
+    if not np.isnan(cv) and cv >= 0.5:
+        return "regression"
+    return "regression"
 
 
 def analyze_matrix(

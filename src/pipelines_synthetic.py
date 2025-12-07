@@ -2,6 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from statsmodels.tsa.arima.model import ARIMA
 
 from src.config import (
     FIGURES_DIR,
@@ -27,8 +28,9 @@ from src.config import (
     ABG_ALPHA,
     ABG_BETA,
     ABG_GAMMA,
-    DT,
+    DT, MA_WINDOW_CANDIDATES, ARIMA_D_RANGE, ARIMA_Q_RANGE, ARIMA_P_RANGE, FORECAST_HORIZONS,
 )
+from src.exponential_smoothing import run_exp_smoothing_synthetic
 
 from src.filters import (
     EntropyAnomalyDetector,
@@ -41,7 +43,7 @@ from src.models import Models
 from src.ts_analysis import (
     metrics_regression,
     analyze_matrix,
-    decompose_and_plot,
+    decompose_and_plot, select_best_ma_window, select_best_arima_order, generate_extrapolation_x,
 )
 from src.synthetic_core import generate_trend, generate_noise, inject_anomalies
 
@@ -170,10 +172,14 @@ def pipeline_synthetic():
     )
     plt.close()
 
+    metrics_rows = []
+
+    es_rows = run_exp_smoothing_synthetic(x_train, trend_train, y_train)
+    metrics_rows.extend(es_rows)
+
     models = Models(device="cpu")
     models.fit_all(x_train, y_train)
 
-    metrics_rows = []
     for name, m in models.models.items():
         y_pred_train = m.predict(x_train)
         y_pred_test = m.predict(x_test)
@@ -197,7 +203,15 @@ def pipeline_synthetic():
         for dataset, mm in [("train", train_metrics), ("test", test_metrics)]:
             for k, v in mm.items():
                 metrics_rows.append(
-                    {"model": name, "dataset": dataset, "metric": k, "value": v}
+                    {
+                        "dataset": "synthetic",
+                        "series": "trend",
+                        "family": "regression",
+                        "model": name,
+                        "subset": dataset,
+                        "metric": k,
+                        "value": v,
+                    }
                 )
 
     df_metrics = pd.DataFrame(metrics_rows)
