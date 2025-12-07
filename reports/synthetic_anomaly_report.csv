@@ -1,4 +1,4 @@
 metric,value
-total_anomalies,122.0
-avg_entropy,2.3831479630867163
-avg_k_local,2.055239157715707
+total_anomalies,90.0
+avg_entropy,2.420788930082315
+avg_k_local,2.5111462362205317

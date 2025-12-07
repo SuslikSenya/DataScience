@@ -1,7 +1,30 @@
+import os
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torchviz import make_dot
+
+from src.config import FIGURES_DIR
+
+
+def save_nn_architecture(
+        model: torch.nn.Module, example_input: torch.Tensor, name: str = "nn_architecture"
+):
+    model.eval()
+    example_input = example_input.to(next(model.parameters()).device)
+
+    y = model(example_input)
+
+    dot = make_dot(y, params=dict(model.named_parameters()))
+
+    arch_dir = os.path.join(FIGURES_DIR, "nn_arch")
+    os.makedirs(arch_dir, exist_ok=True)
+
+    dot.format = "png"
+    dot.directory = arch_dir
+    dot.render(name, cleanup=True)
 
 
 class BaseTSModel:
@@ -57,11 +80,11 @@ class TorchLSTMRegressor(nn.Module):
 
 class TorchNNTSModel(BaseTSModel):
     def __init__(
-        self,
-        hidden_dim: int = 32,
-        lr: float = 1e-3,
-        epochs: int = 500,
-        input_dim: int | None = None,
+            self,
+            hidden_dim: int = 32,
+            lr: float = 1e-3,
+            epochs: int = 500,
+            input_dim: int | None = None,
     ):
         self.hidden_dim = hidden_dim
         self.lr = lr
@@ -78,9 +101,10 @@ class TorchNNTSModel(BaseTSModel):
             self.model = TorchNNRegressor(
                 input_dim=self.input_dim,
                 hidden_dim=self.hidden_dim,
-                output_dim=1,
-            )
+                output_dim=1)
             self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
+            xe = torch.randn(1, self.input_dim)
+            save_nn_architecture(self.model, xe, "mlp_architecture")
 
     def fit(self, x: np.ndarray, y: np.ndarray):
         x = np.asarray(x, dtype=float)
@@ -125,19 +149,20 @@ class TorchNNTSModel(BaseTSModel):
 
 class TorchRNNTsModel(BaseTSModel):
     def __init__(
-        self,
-        hidden_dim: int = 32,
-        lr: float = 1e-3,
-        epochs: int = 500,
+            self,
+            hidden_dim: int = 32,
+            lr: float = 1e-3,
+            epochs: int = 500,
     ):
         self.hidden_dim = hidden_dim
         self.lr = lr
         self.epochs = epochs
         self.model = TorchRNNRegressor(
-            input_dim=1, hidden_dim=self.hidden_dim, num_layers=1
-        )
+            input_dim=1, hidden_dim=self.hidden_dim, num_layers=1)
         self.loss_fn = nn.MSELoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
+        xe = torch.randn(1, 10, 1)
+        save_nn_architecture(self.model, xe, "rnn_architecture")
 
     def fit(self, x: np.ndarray, y: np.ndarray):
         x = np.asarray(x, dtype=float)
@@ -187,19 +212,20 @@ class TorchRNNTsModel(BaseTSModel):
 
 class TorchLSTMTSModel(BaseTSModel):
     def __init__(
-        self,
-        hidden_dim: int = 32,
-        lr: float = 1e-3,
-        epochs: int = 500,
+            self,
+            hidden_dim: int = 32,
+            lr: float = 1e-3,
+            epochs: int = 500,
     ):
         self.hidden_dim = hidden_dim
         self.lr = lr
         self.epochs = epochs
         self.model = TorchLSTMRegressor(
-            input_dim=1, hidden_dim=self.hidden_dim, num_layers=1
-        )
+            input_dim=1, hidden_dim=self.hidden_dim, num_layers=1)
         self.loss_fn = nn.MSELoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
+        xe = torch.randn(1, 10, 1)
+        save_nn_architecture(self.model, xe, "lstm_architecture")
 
     def fit(self, x: np.ndarray, y: np.ndarray):
         x = np.asarray(x, dtype=float)
@@ -234,7 +260,7 @@ class TorchLSTMTSModel(BaseTSModel):
         self.model.eval()
         with torch.no_grad():
             if x.ndim == 1:
-                x_seq = torch.tensor(x.reshape(1, -1, 1), dtype=torch.float32) 
+                x_seq = torch.tensor(x.reshape(1, -1, 1), dtype=torch.float32)
                 y_pred_full = self.model(x_seq).cpu().numpy().reshape(-1)
                 return y_pred_full
             elif x.ndim == 2:
