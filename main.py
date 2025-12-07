@@ -10,7 +10,7 @@ from src.pipelines_synthetic import pipeline_synthetic
 
 """
 Виконав: Слободенюк О.А.
-Lab_work_5, варіант 10, III рівень складності:
+Lab_work_7, варіант 10, IV рівень складності:
 """
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
