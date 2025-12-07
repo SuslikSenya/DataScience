@@ -2,8 +2,8 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
-from statsmodels.tsa.arima.model import ARIMA
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
 
 from src.config import (
     FIGURES_DIR,
@@ -16,8 +16,6 @@ from src.config import (
     TS_NOISE_SCALE, FORECAST_HORIZONS, DATASET10_DATE_COL,
     DATASET10_VALUE_COL, DATASET10_TRAIN_RATIO,
 )
-from src.data_preprocessing import normalize_series, make_windows, denormalize_series, rollout_forecast
-from src.models import NNModels
 
 from src.ts_analysis import (
     metrics_regression,
@@ -25,6 +23,7 @@ from src.ts_analysis import (
     decompose_and_plot,
 )
 
+POLY_DEGREE = 2
 WINDOW_DS10 = 10
 
 
@@ -83,147 +82,128 @@ def statistical_learning_dataset10(region_ts: pd.DataFrame) -> pd.DataFrame:
 
     for region, row in region_ts.iterrows():
         y_full = row.values.astype(float)
+        t = np.arange(n, dtype=float).reshape(-1, 1)
 
-        y_norm_full, mean_y, std_y = normalize_series(y_full)
-        X_all, y_all_target, idx_all = make_windows(y_norm_full, WINDOW_DS10)
-        if len(X_all) == 0:
-            continue
+        t_train = t[:cut]
+        t_test = t[cut:]
+        y_train = y_full[:cut]
+        y_test = y_full[cut:]
 
-        mask_train = idx_all < cut
-        mask_test_idx = idx_all >= cut
+        poly = PolynomialFeatures(degree=POLY_DEGREE, include_bias=False)
+        X_train = poly.fit_transform(t_train)
+        X_test = poly.transform(t_test) if len(t_test) > 0 else None
 
-        X_train_w = X_all[mask_train]
-        y_train_w = y_all_target[mask_train]
-        X_test_w = X_all[mask_test_idx]
-        y_test_w = y_all_target[mask_test_idx]
+        model = LinearRegression()
+        model.fit(X_train, y_train)
 
-        nn_models = NNModels()
-        nn_models.fit_all(X_train_w, y_train_w)
-
-        for name, m in nn_models.models.items():
-            y_pred_all_norm = m.predict(X_all)
-            y_pred_all = denormalize_series(y_pred_all_norm, mean_y, std_y)
-
-            y_pred_train = y_pred_all[mask_train]
-            y_pred_test = y_pred_all[mask_test_idx]
-
-            y_train_real = denormalize_series(y_train_w, mean_y, std_y)
-            y_test_real = denormalize_series(y_test_w, mean_y, std_y)
-
-            m_train = metrics_regression(y_train_real, y_pred_train)
-            if len(y_test_real) > 0:
-                m_test = metrics_regression(y_test_real, y_pred_test)
-            else:
-                m_test = {"mse": float("nan"), "mae": float("nan"), "r2": float("nan")}
-
-            for dataset, mm in [("train", m_train), ("test", m_test)]:
-                records.append(
-                    {
-                        "region": region,
-                        "family": "nn",
-                        "model": name,
-                        "dataset": dataset,
-                        "mse": mm["mse"],
-                        "mae": mm["mae"],
-                        "r2": mm["r2"],
-                    }
-                )
-
-        if "MLP" in nn_models.models:
-            m_plot = nn_models.models["MLP"]
+        y_pred_train = model.predict(X_train)
+        if X_test is not None and len(X_test) > 0:
+            y_pred_test = model.predict(X_test)
         else:
-            first_key = list(nn_models.models.keys())[0]
-            m_plot = nn_models.models[first_key]
+            y_pred_test = np.array([])
 
-        y_pred_all_norm_plot = m_plot.predict(X_all)
-        y_pred_all_plot = denormalize_series(y_pred_all_norm_plot, mean_y, std_y)
-        y_pred_full = np.full_like(y_full, np.nan, dtype=float)
-        y_pred_full[idx_all] = y_pred_all_plot
+        m_train = metrics_regression(y_train, y_pred_train)
+        if len(y_test) > 0:
+            m_test = metrics_regression(y_test, y_pred_test)
+        else:
+            m_test = {"mse": float("nan"), "mae": float("nan"), "r2": float("nan")}
+
+        model_name = f"poly_deg{POLY_DEGREE}"
+
+        for dataset, mm in [("train", m_train), ("test", m_test)]:
+            records.append(
+                {
+                    "region": region,
+                    "family": "poly",
+                    "model": model_name,
+                    "dataset": dataset,
+                    "mse": mm["mse"],
+                    "mae": mm["mae"],
+                    "r2": mm["r2"],
+                }
+            )
+
+        X_all = poly.transform(t)
+        y_pred_full = model.predict(X_all)
 
         plt.figure(figsize=(9, 5))
         plt.plot(months, y_full, marker="o", label="Sales")
-        plt.plot(months, y_pred_full, linestyle="--", label="NN (MLP)")
-        plt.title(f"NN Regression {region}")
+        plt.plot(months, y_pred_full, linestyle="--", label=f"Poly ({model_name})")
+        plt.title(f"Polynomial Regression {region}")
         plt.xlabel("Month")
         plt.ylabel("Sales")
         plt.legend()
         plt.tight_layout()
-        os.makedirs(os.path.join(FIGURES_DIR, "dataset10_nn_regression"), exist_ok=True)
+        os.makedirs(
+            os.path.join(FIGURES_DIR, "dataset10_poly_regression"), exist_ok=True
+        )
         plt.savefig(
             os.path.join(
-                FIGURES_DIR, "dataset10_nn_regression", f"regression_nn_{region}.png"
+                FIGURES_DIR, "dataset10_poly_regression", f"regression_poly_{region}.png"
             )
         )
         plt.close()
 
         train_months = months[:cut]
         test_months = months[cut:] if cut < n else pd.DatetimeIndex([])
-
         last_train_month = train_months[-1]
 
-        for model_name, m in nn_models.models.items():
-            for h in FORECAST_HORIZONS:
-                n_steps = max(1, int(len(train_months) * float(h)))
-                y_hist = y_full[:cut]
-                y_future = rollout_forecast(
-                    m,
-                    y_history=y_hist,
-                    mean=mean_y,
-                    std=std_y,
-                    window=WINDOW_DS10,
-                    n_steps=n_steps,
-                )
+        for h in FORECAST_HORIZONS:
+            n_steps = max(1, int(len(train_months) * float(h)))
+            t_future = np.arange(n, n + n_steps, dtype=float).reshape(-1, 1)
+            X_future = poly.transform(t_future)
+            y_future = model.predict(X_future)
 
-                future_months = pd.date_range(
-                    last_train_month + pd.offsets.MonthEnd(1),
-                    periods=n_steps,
-                    freq="M",
-                )
+            future_months = pd.date_range(
+                last_train_month + pd.offsets.MonthEnd(1),
+                periods=n_steps,
+                freq="ME",
+            )
 
-                df_extr = pd.DataFrame(
-                    {
-                        "region": region,
-                        "model": model_name,
-                        "horizon": h,
-                        "date": future_months,
-                        "y_pred": y_future,
-                    }
-                )
-                df_extr.to_csv(
-                    os.path.join(
-                        extr_dir,
-                        f"{region}_{model_name}_h{h}.csv",
-                    ),
-                    index=False,
-                )
+            df_extr = pd.DataFrame(
+                {
+                    "region": region,
+                    "model": model_name,
+                    "horizon": h,
+                    "date": future_months,
+                    "y_pred": y_future,
+                }
+            )
+            df_extr.to_csv(
+                os.path.join(
+                    extr_dir,
+                    f"{region}_{model_name}_h{h}.csv",
+                ),
+                index=False,
+            )
 
-                plt.figure(figsize=(9, 5))
-                plt.plot(train_months, y_full[:cut], marker="o", label="train")
-                if len(test_months) > 0:
-                    plt.plot(test_months, y_full[cut:], marker="o", label="test")
-                plt.axvline(last_train_month, color="black", linewidth=1.0)
+            plt.figure(figsize=(9, 5))
+            plt.plot(train_months, y_full[:cut], marker="o", label="train")
+            if len(test_months) > 0:
+                plt.plot(test_months, y_full[cut:], marker="o", label="test")
+            plt.axvline(last_train_month, color="black", linewidth=1.0)
 
-                plt.plot(
-                    future_months,
-                    y_future,
-                    marker="o",
-                    linestyle="--",
-                    label=f"{model_name} forecast (h={h})",
-                )
+            plt.plot(
+                future_months,
+                y_future,
+                marker="o",
+                linestyle="--",
+                label=f"{model_name} forecast (h={h})",
+            )
 
-                plt.title(f"{region}: NN {model_name}, horizon={h}")
-                plt.xlabel("Month")
-                plt.ylabel("Sales")
-                plt.legend()
-                plt.grid(True)
-                plt.tight_layout()
-                plt.savefig(
-                    os.path.join(
-                        extr_fig_dir,
-                        f"{region}_{model_name}_h{h}.png",
-                    )
+            plt.title(f"{region}: Polynomial {model_name}, horizon={h}")
+            plt.xlabel("Month")
+            plt.ylabel("Sales")
+            plt.legend()
+            plt.grid(True)
+            plt.tight_layout()
+            plt.savefig(
+                os.path.join(
+                    extr_fig_dir,
+                    f"{region}_{model_name}_h{h}.png",
                 )
-                plt.close()
+            )
+            plt.close()
 
     df_metrics = pd.DataFrame(records)
     os.makedirs(os.path.join(REPORTS_DIR, "dataset10"), exist_ok=True)

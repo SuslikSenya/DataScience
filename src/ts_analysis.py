@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from statsmodels.tsa.arima.model import ARIMA
 
 from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.preprocessing import StandardScaler
@@ -110,6 +109,7 @@ def metrics_regression(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
         r2 = float("nan")
 
     return {"mse": mse, "mae": mae, "r2": r2}
+
 
 def choose_smoothing_family(features: dict) -> str:
     cv = features.get("cv", float("nan"))
