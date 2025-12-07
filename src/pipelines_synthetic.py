@@ -30,7 +30,6 @@ from src.config import (
     ABG_GAMMA,
     DT, MA_WINDOW_CANDIDATES, ARIMA_D_RANGE, ARIMA_Q_RANGE, ARIMA_P_RANGE, FORECAST_HORIZONS,
 )
-from src.exponential_smoothing import run_exp_smoothing_synthetic
 
 from src.filters import (
     EntropyAnomalyDetector,
@@ -39,11 +38,11 @@ from src.filters import (
     AdaptiveAlphaBetaGammaFilter,
     run_filter_series,
 )
-from src.models import Models
+from src.models import NNModels
 from src.ts_analysis import (
     metrics_regression,
     analyze_matrix,
-    decompose_and_plot, select_best_ma_window, select_best_arima_order, generate_extrapolation_x,
+    decompose_and_plot, generate_extrapolation_x
 )
 from src.synthetic_core import generate_trend, generate_noise, inject_anomalies
 
@@ -90,42 +89,6 @@ def pipeline_synthetic():
     noise_stats.to_csv(
         os.path.join(REPORTS_DIR, "synthetic_noise_report.csv"), index=False
     )
-
-    #! --- SELECTION OF MA AND ARIMA PARAMETERS FOR SYNTHETIC ---
-    ma_best_window, ma_best_mse = select_best_ma_window(
-        y_train, MA_WINDOW_CANDIDATES, val_ratio=0.2
-    )
-    arima_best_order, arima_best_aic, arima_best_mse = select_best_arima_order(
-        y_train, ARIMA_P_RANGE, ARIMA_D_RANGE, ARIMA_Q_RANGE, val_ratio=0.2
-    )
-
-    sel_rows = [
-        {
-            "method": "MA",
-            "param": "window",
-            "value": ma_best_window,
-            "metric": "mse_val",
-            "score": ma_best_mse,
-        },
-        {
-            "method": "ARIMA",
-            "param": "order",
-            "value": str(arima_best_order),
-            "metric": "mse_val",
-            "score": arima_best_mse,
-        },
-        {
-            "method": "ARIMA",
-            "param": "order",
-            "value": str(arima_best_order),
-            "metric": "aic",
-            "score": arima_best_aic,
-        },
-    ]
-    pd.DataFrame(sel_rows).to_csv(
-        os.path.join(REPORTS_DIR, "synthetic_ma_arima_selection.csv"), index=False
-    )
-
 
     filters = {
         "AB": AlphaBetaFilter(AB_ALPHA, AB_BETA, DT),
@@ -174,10 +137,7 @@ def pipeline_synthetic():
 
     metrics_rows = []
 
-    es_rows = run_exp_smoothing_synthetic(x_train, trend_train, y_train)
-    metrics_rows.extend(es_rows)
-
-    models = Models(device="cpu")
+    models = NNModels()
     models.fit_all(x_train, y_train)
 
     for name, m in models.models.items():
@@ -231,60 +191,6 @@ def pipeline_synthetic():
                 os.path.join(extr_dir, f"{model_name}_h{h}.csv"),
                 index=False,
             )
-
-    if arima_best_order is not None:
-        try:
-            arima_model = ARIMA(y_train, order=arima_best_order).fit()
-            arima_fig_dir = os.path.join(FIGURES_DIR, "synthetic_arima")
-            os.makedirs(arima_fig_dir, exist_ok=True)
-
-            for h, x_future in x_horizons.items():
-                n_steps = len(x_future)
-                y_future_arima = arima_model.forecast(steps=n_steps)
-                y_future_arima = np.asarray(y_future_arima, dtype=float)
-
-                trend_future = generate_trend(x_future, SYN_TREND_TYPE)
-
-                df_extr = pd.DataFrame(
-                    {
-                        "step": np.arange(len(y_train), len(y_train) + n_steps),
-                        "x": x_future,
-                        "y_pred": y_future_arima,
-                        "y_true_trend": trend_future,
-                    }
-                )
-                df_extr.to_csv(
-                    os.path.join(extr_dir, f"ARIMA_h{h}.csv"),
-                    index=False,
-                )
-
-                plt.figure(figsize=(12, 6))
-                plt.plot(x_train, y_train, label="train noisy", alpha=0.5)
-                plt.plot(x_train, trend_train, "--", label="train trend")
-
-                plt.axvline(x_train[-1], color="black", linewidth=1.0)
-
-                plt.plot(x_future, trend_future, "r--", label=f"true trend (h={h})")
-                plt.plot(
-                    x_future,
-                    y_future_arima,
-                    label=f"ARIMA forecast (h={h})",
-                )
-
-                plt.title(f"ARIMA extrapolation, horizon={h}")
-                plt.xlabel("x")
-                plt.ylabel("y")
-                plt.legend()
-                plt.grid(True)
-                plt.tight_layout()
-                plt.savefig(
-                    os.path.join(arima_fig_dir, f"arima_extrapolation_h{h}.png")
-                )
-                plt.close()
-
-        except Exception as e:
-            print(f"[WARN] ARIMA extrapolation failed: {e}")
-
 
     data = pd.DataFrame(
         {"trend": trend_train, "noisy_clean": y_train},

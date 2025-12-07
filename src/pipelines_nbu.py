@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import requests
-from statsmodels.tsa.arima.model import ARIMA
 
 from src.config import (
     FIGURES_DIR,
@@ -26,18 +25,18 @@ from src.config import (
     TS_DECOMP_MODEL,
     TS_DECOMP_PERIOD_NBU,
     TS_SYNTHETIC_YEARS,
-    TS_NOISE_SCALE, ARIMA_D_RANGE, ARIMA_Q_RANGE, ARIMA_P_RANGE, FORECAST_HORIZONS,
+    TS_NOISE_SCALE, FORECAST_HORIZONS,
 )
-from src.exponential_smoothing import run_exp_smoothing_nbu_for_currency
+from src.data_preproccesing import normalize_series, make_windows, denormalize_series, rollout_forecast
 
 from src.filters import (
     EntropyAnomalyDetector,
-    AdaptiveAlphaBetaGammaFilter,
-    run_filter_series,
+    run_filter_series, AlphaBetaGammaFilter,
 )
-from src.models import Models
-from src.ts_analysis import metrics_regression, analyze_matrix, decompose_and_plot, select_best_arima_order, \
-    generate_extrapolation_x
+from src.models import NNModels
+from src.ts_analysis import metrics_regression, analyze_matrix, decompose_and_plot, generate_extrapolation_x
+
+WINDOW_NBU = 20
 
 
 def fetch_nbu_rates(currencies, start_date: str, end_date: str) -> pd.DataFrame:
@@ -83,18 +82,20 @@ def pipeline_real_nbu():
     train = df.iloc[:cut].reset_index(drop=True)
     test = df.iloc[cut:].reset_index(drop=True)
 
-    x_train = np.arange(len(train), dtype=float)
-    x_test = np.arange(len(train), len(df), dtype=float)
-
     rows_metrics = []
     anomaly_rows = []
     all_series = {}
 
     extr_dir = os.path.join(REPORTS_DIR, "real_nbu_extrapolation")
+    extr_fig_dir = os.path.join(FIGURES_DIR, "real_nbu_nn_extrapolation")
+
     os.makedirs(extr_dir, exist_ok=True)
+    os.makedirs(extr_fig_dir, exist_ok=True)
+
     for cur in NBU_CURRENCIES:
+        y_full = df[cur].astype(float).values
+
         y_train_raw = train[cur].astype(float).values
-        y_test = test[cur].astype(float).values
 
         detector = EntropyAnomalyDetector(
             window=ANOMALY_WINDOW,
@@ -102,9 +103,9 @@ def pipeline_real_nbu():
             alpha=ANOMALY_ALPHA,
             bins=ANOMALY_BINS,
         )
-        y_train_clean, anomalies_count = detector.clean(y_train_raw)
+        y_train_clean, _ = detector.clean(y_train_raw)
 
-        flt = AdaptiveAlphaBetaGammaFilter(ABG_ALPHA, ABG_BETA, ABG_GAMMA, DT)
+        flt = AlphaBetaGammaFilter(ABG_ALPHA, ABG_BETA, ABG_GAMMA, DT)
         y_train_smooth = run_filter_series(flt, y_train_clean)
 
         all_series[cur] = y_train_smooth
@@ -137,7 +138,7 @@ def pipeline_real_nbu():
         plt.plot(
             dates_train,
             y_train_smooth,
-            label=f"{cur} cleaned+smoothed (Entropy + ABG_adaptive)",
+            label=f"{cur} cleaned+smoothed (Entropy + ABG)",
         )
         plt.legend()
         plt.grid(True)
@@ -148,30 +149,41 @@ def pipeline_real_nbu():
         )
         plt.close()
 
-        es_rows = run_exp_smoothing_nbu_for_currency(
-            train["date"].values,
-            test["date"].values
-            if len(test) > 0
-            else np.array([], dtype="datetime64[ns]"),
-            y_train_smooth,
-            y_test,
-            cur,
-        )
-        rows_metrics.extend(es_rows)
+        y_full_norm, mean_y, std_y = normalize_series(y_full)
+        X_all, y_all_target, idx_all = make_windows(y_full_norm, WINDOW_NBU)
+        if len(X_all) == 0:
+            continue
 
-        models = Models(device="cpu")
-        models.fit_all(x_train, y_train_smooth)
-        for name, m in models.models.items():
-            y_pred_train = m.predict(x_train)
-            y_pred_test = m.predict(x_test)
-            train_metrics = metrics_regression(y_train_smooth, y_pred_train)
-            test_metrics = metrics_regression(y_test, y_pred_test)
+        mask_train = idx_all < cut
+        mask_test_idx = idx_all >= cut
+
+        X_train_w = X_all[mask_train]
+        y_train_w = y_all_target[mask_train]
+        X_test_w = X_all[mask_test_idx]
+        y_test_w = y_all_target[mask_test_idx]
+
+        nn_models = NNModels()
+        nn_models.fit_all(X_train_w, y_train_w)
+
+        for name, m in nn_models.models.items():
+            y_pred_all_norm = m.predict(X_all)
+            y_pred_all = denormalize_series(y_pred_all_norm, mean_y, std_y)
+
+            y_pred_train = y_pred_all[mask_train]
+            y_pred_test = y_pred_all[mask_test_idx]
+
+            y_train_real = denormalize_series(y_train_w, mean_y, std_y)
+            y_test_real = denormalize_series(y_test_w, mean_y, std_y)
+
+            train_metrics = metrics_regression(y_train_real, y_pred_train)
+            test_metrics = metrics_regression(y_test_real, y_pred_test)
+
             for dataset, mm in [("train", train_metrics), ("test", test_metrics)]:
                 for k, v in mm.items():
                     rows_metrics.append(
                         {
                             "currency": cur,
-                            "family": "regression",
+                            "family": "nn",
                             "model": name,
                             "dataset": dataset,
                             "metric": k,
@@ -179,16 +191,70 @@ def pipeline_real_nbu():
                         }
                     )
 
-        x_horizons = generate_extrapolation_x(x_train, FORECAST_HORIZONS)
-        for model_name, m in models.models.items():
-            for h, x_future in x_horizons.items():
-                y_future = m.predict(x_future)
+        dates_full = df["date"].values
+        if "MLP" in nn_models.models:
+            m_plot = nn_models.models["MLP"]
+        else:
+            first_key = list(nn_models.models.keys())[0]
+            m_plot = nn_models.models[first_key]
+
+        y_pred_all_norm_plot = m_plot.predict(X_all)
+        y_pred_all_plot = denormalize_series(y_pred_all_norm_plot, mean_y, std_y)
+        y_pred_full = np.full_like(y_full, np.nan, dtype=float)
+        y_pred_full[idx_all] = y_pred_all_plot
+
+        plt.figure(figsize=(12, 6))
+        plt.plot(dates_full, y_full, label=f"{cur} real", alpha=0.7)
+        plt.plot(dates_full, y_pred_full, label=f"{cur} NN (MLP)", linestyle="--")
+        plt.axvline(dates_full[cut - 1], color="black", linewidth=1.0)
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        os.makedirs(os.path.join(FIGURES_DIR, "real_nbu_nn"), exist_ok=True)
+        plt.savefig(
+            os.path.join(FIGURES_DIR, "real_nbu_nn", f"{cur}_nn_regression.png")
+        )
+        plt.close()
+
+        decompose_and_plot(
+            y=y_full,
+            dates=pd.to_datetime(df["date"].values),
+            title=f"NBU decomposition {cur}",
+            fig_path=os.path.join(
+                FIGURES_DIR, "real_nbu_nn", f"{cur}_decomposition.png"
+            ),
+            model=TS_DECOMP_MODEL,
+            period=TS_DECOMP_PERIOD_NBU,
+        )
+
+        last_train_date = train["date"].iloc[-1]
+        last_test_date = test["date"].iloc[-1] if len(test) > 0 else None
+
+        for model_name, m in nn_models.models.items():
+            for h in FORECAST_HORIZONS:
+                n_steps = max(1, int(len(train) * float(h)))
+                y_hist = y_full[:cut]
+                y_future = rollout_forecast(
+                    m,
+                    y_history=y_hist,
+                    mean=mean_y,
+                    std=std_y,
+                    window=WINDOW_NBU,
+                    n_steps=n_steps,
+                )
+
+                future_dates = pd.date_range(
+                    last_train_date + timedelta(days=1),
+                    periods=n_steps,
+                    freq="D",
+                )
+
                 df_extr = pd.DataFrame(
                     {
                         "currency": cur,
                         "model": model_name,
                         "horizon": h,
-                        "step": np.arange(len(x_train), len(x_train) + len(x_future)),
+                        "date": future_dates,
                         "y_pred": y_future,
                     }
                 )
@@ -200,115 +266,42 @@ def pipeline_real_nbu():
                     index=False,
                 )
 
-        dates_full = df["date"].values
-        y_full = df[cur].astype(float).values
-        if "Poly2" in models.models:
-            m_plot = models.models["Poly2"]
-        else:
-            first_key = list(models.models.keys())[0]
-            m_plot = models.models[first_key]
-        y_pred_full = m_plot.predict(np.arange(len(df), dtype=float))
+                plt.figure(figsize=(12, 6))
+                plt.plot(df["date"], y_full, label="real")
+                plt.axvline(last_train_date, color="black", linewidth=1.0)
 
-        plt.figure(figsize=(12, 6))
-        plt.plot(dates_full, y_full, label=f"{cur} real", alpha=0.7)
-        plt.plot(
-            dates_full, y_pred_full, label=f"{cur} Poly2 regression", linestyle="--"
-        )
-        plt.axvline(dates_full[cut - 1], color="black", linewidth=1.0)
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        os.makedirs(os.path.join(FIGURES_DIR, "real_nbu"), exist_ok=True)
-        plt.savefig(os.path.join(FIGURES_DIR, "real_nbu", f"{cur}_regression.png"))
-        plt.close()
+                if last_test_date is not None:
+                    mask_overlap = future_dates <= last_test_date
+                else:
+                    mask_overlap = np.zeros_like(y_future, dtype=bool)
 
-        decompose_and_plot(
-            y=y_full,
-            dates=pd.to_datetime(df["date"].values),
-            title=f"NBU decomposition {cur}",
-            fig_path=os.path.join(FIGURES_DIR, "real_nbu", f"{cur}_decomposition.png"),
-            model=TS_DECOMP_MODEL,
-            period=TS_DECOMP_PERIOD_NBU,
-        )
-
-        arima_order, arima_aic, arima_mse = select_best_arima_order(
-            y_train_smooth, ARIMA_P_RANGE, ARIMA_D_RANGE, ARIMA_Q_RANGE, val_ratio=0.2
-        )
-
-        if arima_order is not None:
-            try:
-                arima_model = ARIMA(y_train_smooth, order=arima_order).fit()
-                arima_fig_dir = os.path.join(FIGURES_DIR, "real_nbu_arima")
-                os.makedirs(arima_fig_dir, exist_ok=True)
-
-                x_horizons_cur = generate_extrapolation_x(x_train, FORECAST_HORIZONS)
-
-                for h, x_future in x_horizons_cur.items():
-                    n_steps = len(x_future)
-                    y_future = np.asarray(arima_model.forecast(steps=n_steps), float)
-
-                    last_train_date = train["date"].iloc[-1]
-                    future_dates = pd.date_range(
-                        last_train_date + timedelta(days=1),
-                        periods=n_steps,
-                        freq="D",
+                if mask_overlap.any():
+                    plt.plot(
+                        future_dates[mask_overlap],
+                        y_future[mask_overlap],
+                        label=f"{model_name} forecast (overlap, h={h})",
+                    )
+                if (~mask_overlap).any():
+                    plt.plot(
+                        future_dates[~mask_overlap],
+                        y_future[~mask_overlap],
+                        linestyle="--",
+                        label=f"{model_name} forecast (beyond, h={h})",
                     )
 
-                    df_extr_arima = pd.DataFrame(
-                        {
-                            "currency": cur,
-                            "horizon": h,
-                            "date": future_dates,
-                            "y_pred": y_future,
-                        }
+                plt.title(f"NBU {cur}: NN {model_name}, horizon={h}")
+                plt.xlabel("date")
+                plt.ylabel("rate")
+                plt.legend()
+                plt.grid(True)
+                plt.tight_layout()
+                plt.savefig(
+                    os.path.join(
+                        extr_fig_dir,
+                        f"{cur}_{model_name}_h{h}.png",
                     )
-                    df_extr_arima.to_csv(
-                        os.path.join(extr_dir, f"{cur}_ARIMA_h{h}.csv"),
-                        index=False,
-                    )
-
-                    plt.figure(figsize=(12, 6))
-                    plt.plot(train["date"], y_train_smooth, label="train smoothed")
-                    plt.plot(test["date"], y_test, label="test real", alpha=0.5)
-                    plt.axvline(train["date"].iloc[-1], color="black", linewidth=1.0)
-
-                    if len(test) > 0:
-                        last_test_date = test["date"].iloc[-1]
-                        mask_overlap = future_dates <= last_test_date
-                    else:
-                        mask_overlap = np.zeros_like(y_future, dtype=bool)
-
-                    if mask_overlap.any():
-                        plt.plot(
-                            future_dates[mask_overlap],
-                            y_future[mask_overlap],
-                            label=f"ARIMA forecast (overlap, h={h})",
-                        )
-                    if (~mask_overlap).any():
-                        plt.plot(
-                            future_dates[~mask_overlap],
-                            y_future[~mask_overlap],
-                            linestyle="--",
-                            label=f"ARIMA forecast (beyond, h={h})",
-                        )
-
-                    plt.title(
-                        f"NBU {cur}: ARIMA extrapolation, horizon={h}, order={arima_order}"
-                    )
-                    plt.xlabel("date")
-                    plt.ylabel("rate")
-                    plt.legend()
-                    plt.grid(True)
-                    plt.tight_layout()
-                    plt.savefig(
-                        os.path.join(
-                            arima_fig_dir, f"{cur}_arima_extrapolation_h{h}.png"
-                        )
-                    )
-                    plt.close()
-
-            except Exception as e:
-                print(f"[WARN] NBU ARIMA failed for {cur}: {e}")
+                )
+                plt.close()
 
     os.makedirs(os.path.join(REPORTS_DIR, "real_nbu"), exist_ok=True)
     df_metrics = pd.DataFrame(rows_metrics)
