@@ -16,7 +16,7 @@ from src.config import (
     TS_NOISE_SCALE, FORECAST_HORIZONS, DATASET10_DATE_COL,
     DATASET10_VALUE_COL, DATASET10_TRAIN_RATIO,
 )
-from src.data_preproccesing import normalize_series, make_windows, denormalize_series, rollout_forecast
+from src.data_preprocessing import normalize_series, make_windows, denormalize_series, rollout_forecast
 from src.models import NNModels
 
 from src.ts_analysis import (

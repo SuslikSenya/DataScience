@@ -9,7 +9,7 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 
-from src.config import RANDOM_STATE, N_CLUSTERS, DEFAULT_MA_WINDOW
+from src.config import RANDOM_STATE, N_CLUSTERS
 
 
 def compute_series_features(y: np.ndarray) -> dict:
@@ -110,36 +110,6 @@ def metrics_regression(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
         r2 = float("nan")
 
     return {"mse": mse, "mae": mae, "r2": r2}
-
-
-def split_train_val_series(y: np.ndarray, val_ratio: float = 0.2):
-    y = np.asarray(y, dtype=float)
-    n = len(y)
-    if n < 5:
-        return y, np.array([], dtype=float)
-    cut = max(1, int((1.0 - val_ratio) * n))
-    return y[:cut], y[cut:]
-
-
-def generate_extrapolation_x(x_train: np.ndarray, horizons) -> dict:
-    x_train = np.asarray(x_train, dtype=float)
-    if len(x_train) < 2:
-        return {}
-
-    x_min, x_max = x_train[0], x_train[-1]
-    interval = x_max - x_min
-    if interval <= 0:
-        interval = float(len(x_train))
-
-    out = {}
-    for h in horizons:
-        n_steps = max(1, int(len(x_train) * float(h)))
-        x_future = np.linspace(
-            x_max, x_max + float(h) * interval, n_steps, endpoint=False
-        )
-        out[h] = x_future
-    return out
-
 
 def choose_smoothing_family(features: dict) -> str:
     cv = features.get("cv", float("nan"))
