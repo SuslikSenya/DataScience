@@ -65,37 +65,6 @@ def decompose_and_plot(
     plt.close(fig)
 
 
-def generate_synthetic_like(
-    y: np.ndarray, years: int, noise_scale: float
-) -> np.ndarray:
-    values = np.asarray(y, dtype=float)
-    n = len(values)
-    mean_val = float(values.mean())
-    seasonal_pattern = values - mean_val
-    base_std = float(values.std())
-    noise_std = base_std * noise_scale
-    total = n * years
-    out = []
-    for t in range(total):
-        m = t % n
-        base = mean_val + seasonal_pattern[m]
-        noise = np.random.normal(0.0, noise_std)
-        out.append(base + noise)
-    return np.asarray(out, dtype=float)
-
-
-def compare_real_vs_synth(y_real: np.ndarray, y_synth: np.ndarray, n_real: int) -> dict:
-    real = np.asarray(y_real, dtype=float)
-    synth = np.asarray(y_synth[:n_real], dtype=float)
-    return {
-        "real_mean": float(real.mean()),
-        "real_std": float(real.std()),
-        "synthetic_mean": float(synth.mean()),
-        "synthetic_std": float(synth.std()),
-        "corr_real_synth": float(pd.Series(real).corr(pd.Series(synth))),
-    }
-
-
 def metrics_regression(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
@@ -218,7 +187,6 @@ def generate_extrapolation_x(x_train: np.ndarray, horizons) -> dict:
     return out
 
 
-# TODO: CHANGE "exponential" or "regression"
 def choose_smoothing_family(features: dict) -> str:
     cv = features.get("cv", float("nan"))
     lag1 = features.get("lag1_autocorr", float("nan"))
@@ -236,8 +204,6 @@ def analyze_matrix(
     name: str,
     model: str,
     period: int,
-    synthetic_years: int,
-    noise_scale: float,
     reports_dir: str,
     figures_dir: str,
 ):
@@ -275,10 +241,7 @@ def analyze_matrix(
         row_f.update(feats)
         feat_records.append(row_f)
 
-        y_synth = generate_synthetic_like(y, synthetic_years, noise_scale)
-        cmp = compare_real_vs_synth(y, y_synth, len(y))
         row_c = {"series": label}
-        row_c.update(cmp)
         cmp_records.append(row_c)
 
     if not feat_records:

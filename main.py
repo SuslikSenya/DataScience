@@ -4,13 +4,11 @@ import torch
 from statsmodels.tools.sm_exceptions import ConvergenceWarning
 
 from src.dirs import ensure_dirs
-from src.pipelines_dataset10 import pipeline_dataset10
 from src.pipelines_nbu import pipeline_real_nbu
-from src.pipelines_synthetic import pipeline_synthetic
 
 """
-Виконав: Слободенюк О.А.
-Lab_work_5, варіант 10, III рівень складності:
+Білет 23: Дослідження алгоритмів обробки аномалій у часових рядах
+Аналіз алгоритмів виявлення та обробки аномалій типу "грубі значення"
 """
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -22,27 +20,10 @@ warnings.filterwarnings("ignore", category=UserWarning, module="statsmodels")
 
 def main():
     ensure_dirs()
-
-    print("Choose pipeline:")
-    print("1 - Synthetic")
-    print("2 - Real NBU")
-    print("3 - DataSet_10")
-    print("Enter - all")
-
-    choice = input("> ").strip()
-
-    if choice == "1":
-        pipeline_synthetic()
-    elif choice == "2":
+    try:
         pipeline_real_nbu()
-    elif choice == "3":
-        pipeline_dataset10()
-    elif choice == "":
-        pipeline_synthetic()
-        pipeline_real_nbu()
-        pipeline_dataset10()
-    else:
-        print("[ERROR]")
+    except Exception as e:
+        print(f"Error {e} ")
 
 
 if __name__ == "__main__":

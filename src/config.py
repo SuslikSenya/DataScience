@@ -5,23 +5,6 @@ DATA_DIR = "data"
 FIGURES_DIR = "figures"
 REPORTS_DIR = "reports"
 
-# SYNTHETIC TS SETTINGS
-SYN_N_TRAIN = 500
-SYN_N_TEST = 200
-SYN_X_RANGE_TRAIN = (0.0, 50.0)
-SYN_X_RANGE_TEST = (51.0, 100.0)
-SYN_TREND_TYPE = "cubic"
-TREND_CFG = {
-    "linear": {"a": 1.5, "b": 10.0},
-    "cubic": {"a": 0.02, "b": 0.2, "c": 5.0, "d": 2.0},
-}
-NOISE_CFG = {
-    "normal": {"mu": 0.0, "sigma": 2.0},
-    "uniform": {},
-}
-SYN_NOISE_TYPE = "normal"
-SYN_ADD_ANOMALIES = True
-SYN_ANOMALY_PERCENTAGE = 0.15
 
 # REAL NBU SETTINGS
 NBU_CURRENCIES = ["USD", "EUR", "RUB"]
